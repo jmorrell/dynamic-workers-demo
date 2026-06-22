@@ -11,7 +11,14 @@ export type RunInput = {
 /** Structured result returned by the harness over RPC. */
 export type RunResult = { ok: true; value: unknown } | { ok: false; error: RunError };
 
-export type RunErrorKind = 'transform_threw' | 'network_blocked' | 'cpu_exceeded' | 'loader_failed' | 'no_transform';
+export type RunErrorKind =
+	| 'transform_threw'
+	| 'network_blocked'
+	| 'cpu_exceeded'
+	| 'loader_failed'
+	| 'no_transform'
+	| 'rate_limited'
+	| 'turnstile_failed';
 
 export type RunError = {
 	kind: RunErrorKind;

@@ -1,6 +1,6 @@
 import { env, createExecutionContext, waitOnExecutionContext, SELF } from 'cloudflare:test';
 import { describe, it, expect, beforeEach, vi } from 'vitest';
-import worker from '../src/index';
+import worker, { setTurnstileVerifier } from '../src/index';
 
 const IncomingRequest = Request<unknown, IncomingRequestCfProperties>;
 
@@ -57,6 +57,8 @@ describe('GET /api/examples handler', () => {
 describe('POST /api/run handler', () => {
 	beforeEach(() => {
 		vi.clearAllMocks();
+		// Set up Turnstile verifier to always pass for these tests
+		setTurnstileVerifier(async () => ({ ok: true, errorCodes: [] }));
 	});
 
 	describe('request routing', () => {

@@ -7,9 +7,17 @@ import { listExamples, getExample } from './examples/manifest';
 import { LogSession } from './runtime/log-session';
 import { LogTailer } from './runtime/log-tailer';
 import { LOG_MAX_LINES, LOG_MAX_BYTES } from './runtime/log-types';
+import { verifyTurnstile } from './runtime/turnstile';
 
 /** Timeout (ms) for reading logs from LogSession after run completes */
 const LOG_READ_TIMEOUT_MS = 500;
+
+/**
+ * Seam for injecting a Turnstile verifier in tests.
+ * Production uses the real verifyTurnstile function.
+ * Tests can override this to force deterministic pass/fail behavior.
+ */
+let turnstileVerifier = verifyTurnstile;
 
 async function handleExamples(request: Request): Promise<Response> {
 	// Only GET allowed
@@ -45,7 +53,47 @@ async function handleRun(request: Request, env: Env, ctx: ExecutionContext): Pro
 		);
 	}
 
-	const { exampleId, customCode, url } = body as { exampleId: unknown; customCode: unknown; url: unknown };
+	const { exampleId, customCode, url, turnstileToken } = body as {
+		exampleId: unknown;
+		customCode: unknown;
+		url: unknown;
+		turnstileToken?: unknown;
+	};
+
+	// GATE 1: Rate limit by client IP
+	const clientIp = request.headers.get('CF-Connecting-IP') ?? 'anonymous';
+	const rateLimitResult = await env.RATE_LIMITER.limit({ key: clientIp });
+	if (!rateLimitResult.success) {
+		return new Response(
+			JSON.stringify({
+				ok: false,
+				error: {
+					kind: 'rate_limited',
+					message: 'Too many runs, please wait and try again.',
+				},
+			}),
+			{ status: 429, headers: { 'content-type': 'application/json' } },
+		);
+	}
+
+	// GATE 2: Verify Turnstile token
+	const turnstileVerifyResult = await turnstileVerifier(
+		typeof turnstileToken === 'string' ? turnstileToken : undefined,
+		env.TURNSTILE_SECRET,
+		clientIp,
+	);
+	if (!turnstileVerifyResult.ok) {
+		return new Response(
+			JSON.stringify({
+				ok: false,
+				error: {
+					kind: 'turnstile_failed',
+					message: 'Verification failed.',
+				},
+			}),
+			{ status: 403, headers: { 'content-type': 'application/json' } },
+		);
+	}
 
 	// Validate url
 	if (typeof url !== 'string') {
@@ -156,6 +204,15 @@ async function handleRun(request: Request, env: Env, ctx: ExecutionContext): Pro
 
 export { LogSession } from './runtime/log-session';
 export { LogTailer } from './runtime/log-tailer';
+
+/**
+ * Override the Turnstile verifier for testing.
+ * In tests, call this to inject a mock/stub verifier that always passes or fails.
+ * @internal Used only in tests
+ */
+export function setTurnstileVerifier(verifier: typeof verifyTurnstile): void {
+	turnstileVerifier = verifier;
+}
 
 export default {
 	async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
