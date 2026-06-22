@@ -20,6 +20,10 @@
 	"vars": {
 		"LOADER_COMPAT_DATE": "2026-06-22",
 	},
+	"durable_objects": {
+		"bindings": [{ "name": "LOG_SESSION", "class_name": "LogSession" }],
+	},
+	"migrations": [{ "tag": "v1", "new_sqlite_classes": ["LogSession"] }],
 	/**
 	 * Smart Placement
 	 * https://developers.cloudflare.com/workers/configuration/smart-placement/#smart-placement

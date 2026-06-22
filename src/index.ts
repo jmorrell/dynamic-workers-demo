@@ -4,6 +4,8 @@ import { fetchTarget } from './runtime/fetch-target';
 import { runInLoader } from './runtime/loader';
 import type { RunResult } from './runtime/types';
 import { listExamples, getExample } from './examples/manifest';
+import { LogSession } from './runtime/log-session';
+import { LogTailer } from './runtime/log-tailer';
 
 async function handleExamples(request: Request): Promise<Response> {
 	// Only GET allowed
@@ -137,6 +139,9 @@ async function handleRun(request: Request, env: Env): Promise<Response> {
 		{ status: 200, headers: { 'content-type': 'application/json' } },
 	);
 }
+
+export { LogSession } from './runtime/log-session';
+export { LogTailer } from './runtime/log-tailer';
 
 export default {
 	async fetch(request: Request, env: Env): Promise<Response> {
