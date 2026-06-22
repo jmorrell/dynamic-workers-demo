@@ -11,6 +11,9 @@ export const HARNESS_SOURCE = `
 import { WorkerEntrypoint } from 'cloudflare:workers';
 import userModule from './user.js';
 
+// SYNC PARTNER: Keep this inlined copy in sync with src/runtime/core.ts classifyTransformError.
+// Both must match exactly. Core.ts is the canonical version (tested in core.spec.ts).
+// Update both locations together if changing matched substrings or logic.
 function classifyTransformError(message) {
   const lower = message.toLowerCase();
   if (
