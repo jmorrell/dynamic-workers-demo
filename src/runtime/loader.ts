@@ -32,7 +32,7 @@ export async function runInLoader(env: Env, input: RunInput, code: string, runId
 
 		// 2. Get or create the worker via the loader
 		const worker = await env.LOADER.get(id, async () => {
-			const workerCode: any = {
+			const workerCode: WorkerLoaderWorkerCode = {
 				compatibilityDate: env.LOADER_COMPAT_DATE,
 				compatibilityFlags: ['nodejs_compat'],
 				mainModule: 'harness.js',
@@ -53,7 +53,9 @@ export async function runInLoader(env: Env, input: RunInput, code: string, runId
 
 			// Attach tail worker if runId and ctx are provided
 			if (runId && ctx) {
-				workerCode.tails = [ctx.exports.LogTailer({ props: { runId } })];
+				// ctx.exports is typed {} until GlobalProps is generated; narrow the loopback binding.
+				const exports = ctx.exports as { LogTailer: (o: { props: { runId: string } }) => Fetcher };
+				workerCode.tails = [exports.LogTailer({ props: { runId } })];
 			}
 
 			return workerCode;

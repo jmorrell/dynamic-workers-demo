@@ -4,20 +4,20 @@ import { WorkerEntrypoint } from 'cloudflare:workers';
 import type { LogLine } from './log-types';
 
 export class LogTailer extends WorkerEntrypoint<Env> {
-	async tail(events: any[]): Promise<void> {
+	async tail(events: ReadonlyArray<TraceItem>): Promise<void> {
 		const runId = (this.ctx.props as { runId: string }).runId;
 		const lines: Array<LogLine> = [];
 
 		for (const event of events) {
 			// Process logs from event
-			for (const log of event.logs ?? []) {
+			for (const log of event.logs) {
 				const message = Array.isArray(log.message) ? log.message.map(String).join(' ') : String(log.message);
 				lines.push({ level: String(log.level ?? 'log'), message });
 			}
 
 			// Process exceptions from event
-			for (const ex of event.exceptions ?? []) {
-				lines.push({ level: 'error', message: `${ex.name ?? 'Error'}: ${ex.message ?? ''}` });
+			for (const ex of event.exceptions) {
+				lines.push({ level: 'error', message: `${ex.name}: ${ex.message}` });
 			}
 		}
 
