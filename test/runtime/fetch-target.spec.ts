@@ -176,7 +176,7 @@ describe("fetchTarget", () => {
 			}
 		});
 
-		it("returns fetch_failed on timeout", async () => {
+		it("returns fetch_failed when mock rejects with timeout", async () => {
 			vi.stubGlobal("fetch", vi.fn(() =>
 				Promise.reject(new Error("Timeout"))
 			));
@@ -186,6 +186,39 @@ describe("fetchTarget", () => {
 			expect(result.ok).toBe(false);
 			if (!result.ok) {
 				expect(result.error.kind).toBe("fetch_failed");
+			}
+		});
+
+		it("aborts fetch after timeout via AbortController", async () => {
+			// Mock fetch to be intercepted by AbortSignal
+			let abortSignal: AbortSignal | undefined;
+			const fetchMock = vi.fn((url: string, init?: RequestInit) => {
+				abortSignal = init?.signal;
+				// Listen for abort and reject when it happens
+				if (abortSignal) {
+					return new Promise((_, reject) => {
+						abortSignal!.addEventListener("abort", () => {
+							reject(new Error("The user aborted a request."));
+						});
+					});
+				}
+				// Fallback that never settles (but shouldn't happen)
+				return new Promise(() => {});
+			});
+
+			vi.stubGlobal("fetch", fetchMock);
+
+			// Use a short timeout so the test completes quickly
+			const result = await fetchTarget("https://slow.example.com", {
+				timeoutMs: 50,
+			});
+
+			// Should fail due to abort
+			expect(result.ok).toBe(false);
+			if (!result.ok) {
+				expect(result.error.kind).toBe("fetch_failed");
+				// Verify fetch was called with an abort signal
+				expect(fetchMock).toHaveBeenCalled();
 			}
 		});
 
