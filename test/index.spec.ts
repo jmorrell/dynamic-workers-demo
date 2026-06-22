@@ -36,6 +36,22 @@ describe('GET /api/examples handler', () => {
 
 		expect(response.status).toBe(405);
 	});
+
+	it('GET /api/examples still returns manifest with assets binding enabled (routing correct)', async () => {
+		const request = new IncomingRequest('http://example.com/api/examples', {
+			method: 'GET',
+		});
+		const ctx = createExecutionContext();
+		const response = await worker.fetch(request, env, ctx);
+		await waitOnExecutionContext(ctx);
+
+		expect(response.status).toBe(200);
+		const manifest = await response.json<Array<{ id: string; title: string }>>();
+		expect(Array.isArray(manifest)).toBe(true);
+		expect(manifest.length).toBeGreaterThan(0);
+		expect(manifest[0]).toHaveProperty('id');
+		expect(manifest[0]).toHaveProperty('title');
+	});
 });
 
 describe('POST /api/run handler', () => {
@@ -252,5 +268,44 @@ describe('POST /api/run handler', () => {
 			expect(typeof data.timingMs).toBe('number');
 			expect(data.timingMs).toBeGreaterThanOrEqual(0);
 		});
+
+		it('returns raw <script> tag as unmodified string in JSON (trust boundary)', async () => {
+			const transformCode = 'export default (input) => ({ script: "<script>alert(1)</script>" })';
+			const request = new IncomingRequest('http://example.com/api/run', {
+				method: 'POST',
+				body: JSON.stringify({
+					customCode: transformCode,
+					url: 'http://example.com',
+				}),
+			});
+			const ctx = createExecutionContext();
+			const response = await worker.fetch(request, env, ctx);
+			await waitOnExecutionContext(ctx);
+
+			expect(response.status).toBe(200);
+			const data = await response.json<{ ok: boolean; result?: { script: string } }>();
+			expect(data.ok).toBe(true);
+			if (data.ok && data.result) {
+				// Assert the raw string is returned unmodified — client responsibility to escape
+				expect(data.result.script).toBe('<script>alert(1)</script>');
+				expect(data.result.script).toContain('<script>');
+			}
+		});
+	});
+});
+
+describe('Static assets routing', () => {
+	it('GET / returns HTML (empirical: assets serve in vitest pool)', async () => {
+		// Empirical test to determine if @cloudflare/vitest-pool-workers serves static assets.
+		// The ASSETS binding with run_worker_first: ["/api/*"] should serve "/" before the Worker runs.
+		// If this test passes, assets ARE served locally in vitest; if it fails, they are NOT
+		// (then the serving is deploy/human-verified and documented in test-requirements.md).
+		const response = await SELF.fetch('http://example.com/');
+		expect(response.status).toBe(200);
+		const text = await response.text();
+		// Check for basic HTML structure (index.html should contain typical HTML tags)
+		expect(text).toMatch(/<html|<!DOCTYPE/i);
+		// The widget HTML should reference the app.js file or contain elements from index.html
+		expect(text.toLowerCase()).toMatch(/(app\.js|editor|example|widget)/);
 	});
 });
