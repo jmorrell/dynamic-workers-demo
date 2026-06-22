@@ -22,44 +22,40 @@ import { HARNESS_SOURCE } from './harness-source';
  *
  * The harness handles transform-level failures and always returns structured result.
  */
-export async function runInLoader(
-  env: Env,
-  input: RunInput,
-  code: string,
-): Promise<RunResult> {
-  try {
-    // 1. Hash the code for cache key (identical code → same isolate)
-    const id = await hashCode(code);
+export async function runInLoader(env: Env, input: RunInput, code: string): Promise<RunResult> {
+	try {
+		// 1. Hash the code for cache key (identical code → same isolate)
+		const id = await hashCode(code);
 
-    // 2. Get or create the worker via the loader
-    const worker = await env.LOADER.get(id, async () => ({
-      compatibilityDate: env.LOADER_COMPAT_DATE,
-      compatibilityFlags: ['nodejs_compat'],
-      mainModule: 'harness.js',
-      modules: {
-        'harness.js': HARNESS_SOURCE,
-        'user.js': code,
-      },
-      env: {
-        INPUT: input,
-      },
-      globalOutbound: null, // Block all outbound fetch
-    }));
+		// 2. Get or create the worker via the loader
+		const worker = await env.LOADER.get(id, async () => ({
+			compatibilityDate: env.LOADER_COMPAT_DATE,
+			compatibilityFlags: ['nodejs_compat'],
+			mainModule: 'harness.js',
+			modules: {
+				'harness.js': HARNESS_SOURCE,
+				'user.js': code,
+			},
+			env: {
+				INPUT: input,
+			},
+			globalOutbound: null, // Block all outbound fetch
+		}));
 
-    // 3. Invoke the harness via RPC
-    // @ts-expect-error worker entrypoint has run() method dynamically
-    const entrypoint = worker.getEntrypoint() as { run(): Promise<RunResult> };
-    const result = await entrypoint.run();
-    return result;
-  } catch (err) {
-    // Loader-level failure (RPC, initialization, etc.)
-    const message = err instanceof Error ? err.message : String(err);
-    return {
-      ok: false,
-      error: {
-        kind: 'loader_failed',
-        message,
-      },
-    };
-  }
+		// 3. Invoke the harness via RPC
+		// @ts-expect-error worker entrypoint has run() method dynamically
+		const entrypoint = worker.getEntrypoint() as { run(): Promise<RunResult> };
+		const result = await entrypoint.run();
+		return result;
+	} catch (err) {
+		// Loader-level failure (RPC, initialization, etc.)
+		const message = err instanceof Error ? err.message : String(err);
+		return {
+			ok: false,
+			error: {
+				kind: 'loader_failed',
+				message,
+			},
+		};
+	}
 }

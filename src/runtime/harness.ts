@@ -13,32 +13,32 @@ import { classifyTransformError } from './core';
 import userModule from './user.js';
 
 export default class Harness extends WorkerEntrypoint<{ INPUT: RunInput }> {
-  async run(): Promise<RunResult> {
-    const input = this.env.INPUT;
+	async run(): Promise<RunResult> {
+		const input = this.env.INPUT;
 
-    const transform = (userModule as { default?: unknown })?.default ?? userModule;
-    if (typeof transform !== 'function') {
-      return {
-        ok: false,
-        error: {
-          kind: 'no_transform',
-          message: 'Module does not export a transform function',
-        },
-      };
-    }
+		const transform = (userModule as { default?: unknown })?.default ?? userModule;
+		if (typeof transform !== 'function') {
+			return {
+				ok: false,
+				error: {
+					kind: 'no_transform',
+					message: 'Module does not export a transform function',
+				},
+			};
+		}
 
-    try {
-      const value = await (transform as (i: RunInput) => unknown)(input);
-      return { ok: true, value };
-    } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
-      return {
-        ok: false,
-        error: {
-          kind: classifyTransformError(message),
-          message,
-        },
-      };
-    }
-  }
+		try {
+			const value = await (transform as (i: RunInput) => unknown)(input);
+			return { ok: true, value };
+		} catch (err) {
+			const message = err instanceof Error ? err.message : String(err);
+			return {
+				ok: false,
+				error: {
+					kind: classifyTransformError(message),
+					message,
+				},
+			};
+		}
+	}
 }
