@@ -54,6 +54,40 @@ describe('GET /api/examples handler', () => {
 	});
 });
 
+describe('GET /api/config handler', () => {
+	it('returns 200 with turnstileSitekey', async () => {
+		const request = new IncomingRequest('http://example.com/api/config', {
+			method: 'GET',
+		});
+		const ctx = createExecutionContext();
+		const response = await worker.fetch(request, env, ctx);
+		await waitOnExecutionContext(ctx);
+
+		expect(response.status).toBe(200);
+		expect(response.headers.get('content-type')).toContain('application/json');
+
+		const data = await response.json<Record<string, unknown>>();
+		expect('turnstileSitekey' in data).toBe(true);
+		expect(typeof data.turnstileSitekey).toBe('string');
+
+		// Verify that the secret is NOT exposed
+		expect('secret' in data).toBe(false);
+		expect('TURNSTILE_SECRET' in data).toBe(false);
+		expect('turnstileSecret' in data).toBe(false);
+	});
+
+	it('returns 405 for POST /api/config', async () => {
+		const request = new IncomingRequest('http://example.com/api/config', {
+			method: 'POST',
+		});
+		const ctx = createExecutionContext();
+		const response = await worker.fetch(request, env, ctx);
+		await waitOnExecutionContext(ctx);
+
+		expect(response.status).toBe(405);
+	});
+});
+
 describe('POST /api/run handler', () => {
 	beforeEach(() => {
 		vi.clearAllMocks();

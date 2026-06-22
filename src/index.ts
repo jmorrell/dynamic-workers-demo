@@ -29,6 +29,19 @@ async function handleExamples(request: Request): Promise<Response> {
 	return new Response(JSON.stringify(examples), { status: 200, headers: { 'content-type': 'application/json' } });
 }
 
+async function handleConfig(request: Request, env: Env): Promise<Response> {
+	// Only GET allowed
+	if (request.method !== 'GET') {
+		return new Response('Method not allowed', { status: 405 });
+	}
+
+	// Return only the public site key, never the secret
+	return new Response(JSON.stringify({ turnstileSitekey: env.TURNSTILE_SITEKEY }), {
+		status: 200,
+		headers: { 'content-type': 'application/json' },
+	});
+}
+
 async function handleRun(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
 	// Validate method
 	if (request.method !== 'POST') {
@@ -221,6 +234,11 @@ export default {
 		// Route GET /api/examples
 		if (url.pathname === '/api/examples') {
 			return handleExamples(request);
+		}
+
+		// Route GET /api/config
+		if (url.pathname === '/api/config') {
+			return handleConfig(request, env);
 		}
 
 		// Route POST /api/run

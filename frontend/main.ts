@@ -12,6 +12,8 @@ type State = {
 	selectedExampleId: string | null;
 	isCustomCode: boolean;
 	isRunning: boolean;
+	turnstileWidgetId: string | null;
+	turnstileReady: boolean;
 };
 
 const state: State = {
@@ -19,6 +21,8 @@ const state: State = {
 	selectedExampleId: null,
 	isCustomCode: false,
 	isRunning: false,
+	turnstileWidgetId: null,
+	turnstileReady: false,
 };
 
 // DOM element references
@@ -34,6 +38,7 @@ const logsContainerEl = document.getElementById('logs-container') as HTMLDivElem
 const timingInfoEl = document.getElementById('timing-info') as HTMLDivElement;
 const suggestedUrlsSection = document.getElementById('suggested-urls-section') as HTMLDivElement;
 const suggestedUrlsEl = document.getElementById('suggested-urls') as HTMLDivElement;
+const turnstileDiv = document.getElementById('turnstile') as HTMLDivElement;
 
 // CodeJar turns the editor div into an editable, syntax-highlighted code field
 // with cursor preservation across re-highlights. setEditorCode() toggles between
@@ -52,6 +57,7 @@ function setEditorCode(code: string, editable: boolean): void {
 // Initialize on page load
 document.addEventListener('DOMContentLoaded', async () => {
 	await loadExamples();
+	await initializeTurnstile();
 	setupEventListeners();
 	updateRunButton();
 });
@@ -76,6 +82,48 @@ async function loadExamples(): Promise<void> {
 		}
 	} catch (error) {
 		console.error('Error loading examples:', error);
+	}
+}
+
+async function initializeTurnstile(): Promise<void> {
+	try {
+		// Fetch the Turnstile site key from the server
+		const configResponse = await fetch('/api/config');
+		if (!configResponse.ok) {
+			console.error('Failed to load Turnstile config:', configResponse.statusText);
+			return;
+		}
+
+		const config = (await configResponse.json()) as { turnstileSitekey: string };
+		const sitekey = config.turnstileSitekey;
+
+		// Wait for the Turnstile global to be available (script loads asynchronously)
+		// Poll with a reasonable timeout
+		let attempts = 0;
+		const maxAttempts = 50; // ~5 seconds with 100ms intervals
+		while (!window.turnstile && attempts < maxAttempts) {
+			await new Promise((resolve) => setTimeout(resolve, 100));
+			attempts++;
+		}
+
+		if (!window.turnstile) {
+			console.warn('Turnstile script did not load in time');
+			return;
+		}
+
+		// Render the Turnstile widget
+		const widgetId = window.turnstile.render('#turnstile', {
+			sitekey,
+			callback: (token: string) => {
+				// Token callback is called when user completes the challenge
+				// Store it for later retrieval in onRunClick
+			},
+		});
+
+		state.turnstileWidgetId = widgetId;
+		state.turnstileReady = true;
+	} catch (error) {
+		console.error('Error initializing Turnstile:', error);
 	}
 }
 
@@ -172,6 +220,14 @@ async function onRunClick(): Promise<void> {
 		payload.exampleId = state.selectedExampleId;
 	}
 
+	// Get the Turnstile token if the widget is ready
+	if (state.turnstileReady && window.turnstile && state.turnstileWidgetId !== null) {
+		const token = window.turnstile.getResponse(state.turnstileWidgetId);
+		if (token) {
+			payload.turnstileToken = token;
+		}
+	}
+
 	try {
 		const response = await fetch('/api/run', {
 			method: 'POST',
@@ -194,6 +250,11 @@ async function onRunClick(): Promise<void> {
 
 		const data = (await response.json()) as RunResponse;
 		renderResults(data);
+
+		// Reset the Turnstile widget for the next run (token is single-use)
+		if (state.turnstileReady && window.turnstile && state.turnstileWidgetId !== null) {
+			window.turnstile.reset(state.turnstileWidgetId);
+		}
 	} catch (error) {
 		resultsSection.className = 'error';
 		resultsTitleEl.textContent = 'Error';
