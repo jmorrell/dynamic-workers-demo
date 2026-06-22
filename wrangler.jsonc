@@ -19,7 +19,11 @@
 	// date, so the vitest config overrides this var to a supported date.
 	"vars": {
 		"LOADER_COMPAT_DATE": "2026-06-22",
+		"TURNSTILE_SITEKEY": "1x00000000000000000000AA",
 	},
+	"ratelimits": [
+		{ "name": "RATE_LIMITER", "namespace_id": "1001", "simple": { "limit": 10, "period": 60 } },
+	],
 	"durable_objects": {
 		"bindings": [{ "name": "LOG_SESSION", "class_name": "LogSession" }],
 	},
