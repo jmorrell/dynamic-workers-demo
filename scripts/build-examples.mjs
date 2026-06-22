@@ -2,6 +2,7 @@
 import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
+import { execSync } from 'child_process';
 import * as esbuild from 'esbuild';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -124,6 +125,14 @@ export const GENERATED_MANIFEST = ${JSON.stringify(manifestEntries, null, '\t')}
 
 	const outputPath = path.resolve(repoRoot, 'src/examples/manifest.generated.ts');
 	fs.writeFileSync(outputPath, generatedManifest, 'utf8');
+
+	// Format with prettier
+	try {
+		execSync(`npx prettier --write "${outputPath}"`, { stdio: 'pipe' });
+	} catch (error) {
+		// Prettier formatting is not critical to the build, just warn
+		console.warn('Warning: Could not format manifest.generated.ts with prettier');
+	}
 
 	console.log(`Generated manifest at ${outputPath}`);
 	console.log(`  ${manifestEntries.length} examples bundled`);
