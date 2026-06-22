@@ -97,8 +97,9 @@ async function initializeTurnstile(): Promise<void> {
 		const config = (await configResponse.json()) as { turnstileSitekey: string };
 		const sitekey = config.turnstileSitekey;
 
-		// Wait for the Turnstile global to be available (script loads asynchronously)
-		// Poll with a reasonable timeout
+		// The api.js script loads async/defer and exposes no ready event, so we
+		// poll for the global before rendering. Bounded so a failed load degrades
+		// gracefully (the server still enforces the token).
 		let attempts = 0;
 		const maxAttempts = 50; // ~5 seconds with 100ms intervals
 		while (!window.turnstile && attempts < maxAttempts) {
@@ -111,12 +112,14 @@ async function initializeTurnstile(): Promise<void> {
 			return;
 		}
 
-		// Render the Turnstile widget
+		// Render the widget. The token is read on demand via getResponse() in
+		// onRunClick, so no success callback is needed; wire error-callback so a
+		// failed challenge marks the widget not-ready rather than failing silently.
 		const widgetId = window.turnstile.render('#turnstile', {
 			sitekey,
-			callback: (token: string) => {
-				// Token callback is called when user completes the challenge
-				// Store it for later retrieval in onRunClick
+			'error-callback': () => {
+				console.warn('Turnstile widget reported an error');
+				state.turnstileReady = false;
 			},
 		});
 

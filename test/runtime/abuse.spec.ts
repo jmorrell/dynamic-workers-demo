@@ -1,18 +1,15 @@
 import { env, createExecutionContext, waitOnExecutionContext, SELF } from 'cloudflare:test';
-import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
+import { describe, it, expect, afterEach, vi } from 'vitest';
 import worker, { setTurnstileVerifier } from '../../src/index';
+import { verifyTurnstile } from '../../src/runtime/turnstile';
 
 const IncomingRequest = Request<unknown, IncomingRequestCfProperties>;
 
 describe('Abuse controls on /api/run', () => {
-	beforeEach(() => {
-		// Reset to real verifier before each test
-		// (each test that needs a mock will override this)
-	});
-
+	// The verifier is a module-level seam; restore the real implementation after
+	// every test so no test leaves it in an always-pass state for the next one.
 	afterEach(() => {
-		// Reset to real verifier after test (to be safe)
-		// Tests should reset themselves if they override
+		setTurnstileVerifier(verifyTurnstile);
 	});
 
 	describe('AC6.2: Turnstile verification', () => {
