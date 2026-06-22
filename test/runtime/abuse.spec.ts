@@ -110,56 +110,46 @@ describe('Abuse controls on /api/run', () => {
 	});
 
 	describe('AC6.3: Rate limiting', () => {
-		it('exceeding rate limit returns 429 and does not invoke loader', async () => {
-			// Override verifier to always pass so we can focus on rate limiting
+		it('returns 429 and does not invoke the loader when the per-IP limit is exceeded', async () => {
+			// Turnstile passes so we isolate the rate-limit gate. The RATE_LIMITER
+			// binding is a no-op stub in vitest-pool-workers (limit() always returns
+			// success — real per-IP counting is enforced only on deployed Cloudflare
+			// infra, see test-requirements.md), so force the limit-exceeded branch
+			// deterministically by mocking limit(). This proves the gate's response
+			// (429 + rate_limited) and that the loader is not invoked.
 			setTurnstileVerifier(async () => ({ ok: true, errorCodes: [] }));
+			const limitSpy = vi.spyOn(env.RATE_LIMITER, 'limit').mockResolvedValue({ success: false });
 
 			try {
-				const testIp = '203.0.113.42'; // TEST-NET-3 (example IP)
+				const request = new IncomingRequest('http://example.com/api/run', {
+					method: 'POST',
+					body: JSON.stringify({
+						customCode: 'export default (input) => input.status',
+						url: 'https://example.com/test',
+						turnstileToken: '1x00000000000000000000AA',
+					}),
+					headers: {
+						'CF-Connecting-IP': '203.0.113.42',
+					},
+				});
+				const ctx = createExecutionContext();
+				const response = await worker.fetch(request, env, ctx);
+				await waitOnExecutionContext(ctx);
 
-				// Attempt to exceed the limit (10 per 60s) by making multiple requests
-				// with the same IP. Make 3 quick requests - if rate limiting works locally,
-				// at least one should be rejected.
-				const responses = [];
-				for (let i = 0; i < 3; i++) {
-					const request = new IncomingRequest('http://example.com/api/run', {
-						method: 'POST',
-						body: JSON.stringify({
-							customCode: 'return { ok: true };', // minimal code to avoid fetch timeout
-							url: 'https://example.com/test',
-							turnstileToken: 'dummy-token',
-						}),
-						headers: {
-							'CF-Connecting-IP': testIp,
-						},
-					});
-					const ctx = createExecutionContext();
-					const response = await worker.fetch(request, env, ctx);
-					await waitOnExecutionContext(ctx);
-					responses.push(response);
-				}
-
-				// If rate limiting enforces locally, at least one request should be 429
-				const rateLimitedResponse = responses.find((r) => r.status === 429);
-
-				if (rateLimitedResponse) {
-					// Rate limiting is enforcing locally - verify the response
-					const data = await rateLimitedResponse.json<any>();
-					expect(data.ok).toBe(false);
-					expect(data.error?.kind).toBe('rate_limited');
-					expect(data.error?.message).toContain('Too many runs');
-					// Loader NOT invoked
-					expect('result' in data).toBe(false);
-					expect('timingMs' in data).toBe(false);
-					expect('logs' in data).toBe(false);
-				} else {
-					// Rate limiting is not enforcing locally in vitest
-					// This is expected - the binding is a stub in test env
-					// The gate logic is still present and tested via the injectable seam
-					expect(true).toBe(true);
-				}
+				expect(response.status).toBe(429);
+				const data = await response.json<any>();
+				expect(data.ok).toBe(false);
+				expect(data.error?.kind).toBe('rate_limited');
+				expect(data.error?.message).toContain('Too many runs');
+				// Loader NOT invoked: the rate-limit gate runs before fetch/loader, so
+				// the response carries none of the run fields.
+				expect('result' in data).toBe(false);
+				expect('timingMs' in data).toBe(false);
+				expect('logs' in data).toBe(false);
+				// The gate keys the limiter on the client IP.
+				expect(limitSpy).toHaveBeenCalledWith({ key: '203.0.113.42' });
 			} finally {
-				// Reset to identity verifier for next tests
+				limitSpy.mockRestore();
 				setTurnstileVerifier(async () => ({ ok: true, errorCodes: [] }));
 			}
 		});

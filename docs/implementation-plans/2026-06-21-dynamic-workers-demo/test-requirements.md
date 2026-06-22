@@ -73,7 +73,7 @@ Supporting: `LogSession` DO behavior (`test/runtime/log-session.spec.ts`).
 |----|------|---------------|------------------|
 | AC6.1 | unit **+ human** | `test/frontend/render.spec.ts` (`escapeHtml`) + manual iframe check | HTML/`<script>` in output rendered inert (escaped), not executed |
 | AC6.2 | unit + integration **+ deploy** | `test/runtime/turnstile.spec.ts`, `test/runtime/abuse.spec.ts`; **deploy** with real keys | missing/invalid Turnstile token → 403, loader NOT invoked |
-| AC6.3 | integration | `test/runtime/abuse.spec.ts` | exceeding per-IP limit → 429 clear message, loader NOT invoked |
+| AC6.3 | integration **+ deploy** | `test/runtime/abuse.spec.ts` | rate-limit gate → 429 `rate_limited` + loader NOT invoked, asserted by mocking `RATE_LIMITER.limit()` (the binding is a no-op stub in vitest); **deploy**: real per-IP counting enforcement |
 
 ---
 
@@ -86,6 +86,7 @@ Supporting: `LogSession` DO behavior (`test/runtime/log-session.spec.ts`).
 - [ ] **AC4.5** — load `public/embed-example.html`; widget renders inside the iframe.
 - [ ] **AC6.1** — run something returning `<script>…</script>`; confirm escaped text displayed, no alert.
 - [ ] **AC6.2** — with production Turnstile keys, a run without solving the challenge is rejected (403); loader not invoked.
+- [ ] **AC6.3** — on the deployed instance, exceeding the per-IP limit (10/60s) returns 429 (`RATE_LIMITER` enforces real per-IP counting only on Cloudflare infra; locally it is a no-op stub).
 
 ## Coverage summary
 
