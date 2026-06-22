@@ -1,0 +1,87 @@
+{
+	"id": 39284928,
+	"created_at": "2024-01-15T10:30:00Z",
+	"created_at_i": 1705318200,
+	"type": "story",
+	"author": "hn_author",
+	"title": "Understanding Web Performance Optimization",
+	"url": "https://example.com/article",
+	"text": null,
+	"points": 500,
+	"parent_id": null,
+	"story_id": 39284928,
+	"comment_count": 150,
+	"story_text": "A comprehensive guide to optimizing web performance",
+	"children": [
+		{
+			"id": 39285001,
+			"created_at": "2024-01-15T11:00:00Z",
+			"created_at_i": 1705320000,
+			"type": "comment",
+			"author": "user_alice",
+			"text": "Excellent breakdown of Core Web Vitals. The LCP optimization tips alone saved us several seconds on page load.",
+			"points": 125,
+			"parent_id": 39284928,
+			"story_id": 39284928,
+			"children": [
+				{
+					"id": 39285050,
+					"created_at": "2024-01-15T11:30:00Z",
+					"created_at_i": 1705321800,
+					"type": "comment",
+					"author": "user_bob",
+					"text": "Did you implement image optimization as well?",
+					"points": 42,
+					"parent_id": 39285001,
+					"story_id": 39284928
+				},
+				{
+					"id": 39285075,
+					"created_at": "2024-01-15T11:45:00Z",
+					"created_at_i": 1705322700,
+					"type": "comment",
+					"author": "user_charlie",
+					"text": "We switched to WebP and the difference was significant.",
+					"points": 35,
+					"parent_id": 39285001,
+					"story_id": 39284928
+				}
+			]
+		},
+		{
+			"id": 39285200,
+			"created_at": "2024-01-15T12:00:00Z",
+			"created_at_i": 1705324800,
+			"type": "comment",
+			"author": "user_diana",
+			"text": "The CDN section was particularly relevant for our international user base. Traffic from Europe and Asia has never been faster.",
+			"points": 98,
+			"parent_id": 39284928,
+			"story_id": 39284928
+		},
+		{
+			"id": 39285350,
+			"created_at": "2024-01-15T12:30:00Z",
+			"created_at_i": 1705326600,
+			"type": "comment",
+			"author": "user_eve",
+			"text": "Anyone using Lighthouse CI in their build pipeline?",
+			"points": 56,
+			"parent_id": 39284928,
+			"story_id": 39284928,
+			"children": [
+				{
+					"id": 39285400,
+					"created_at": "2024-01-15T13:00:00Z",
+					"created_at_i": 1705328400,
+					"type": "comment",
+					"author": "user_frank",
+					"text": "Yes, it's been game-changing for catching regressions early.",
+					"points": 22,
+					"parent_id": 39285350,
+					"story_id": 39284928
+				}
+			]
+		}
+	]
+}

@@ -1,0 +1,58 @@
+[
+	{
+		"data": {
+			"children": []
+		}
+	},
+	{
+		"data": {
+			"children": [
+				{
+					"kind": "t1",
+					"data": {
+						"author": "alice",
+						"score": 1250,
+						"body": "This is the top comment about web performance. It provides useful insights about optimization techniques.",
+						"created_utc": 1234567890
+					}
+				},
+				{
+					"kind": "t1",
+					"data": {
+						"author": "bob",
+						"score": 890,
+						"body": "Great article! I found the section on Core Web Vitals particularly helpful. Implementing these changes improved our site speed by 40%.",
+						"created_utc": 1234567891
+					}
+				},
+				{
+					"kind": "t1",
+					"data": {
+						"author": "charlie",
+						"score": 650,
+						"body": "Has anyone else tried using a CDN? The difference in load times was night and day for our international users.",
+						"created_utc": 1234567892
+					}
+				},
+				{
+					"kind": "t1",
+					"data": {
+						"author": "diana",
+						"score": 420,
+						"body": "The Lighthouse recommendations have been invaluable for our development process.",
+						"created_utc": 1234567893
+					}
+				},
+				{
+					"kind": "t1",
+					"data": {
+						"author": "eve",
+						"score": 180,
+						"body": "Is anyone using WebPageTest? I'd like to hear about your experience.",
+						"created_utc": 1234567894
+					}
+				}
+			]
+		}
+	}
+]
