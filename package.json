@@ -3,7 +3,7 @@
   "version": "0.0.0",
   "private": true,
   "scripts": {
-    "build": "node scripts/build-examples.mjs",
+    "build": "node scripts/build-examples.mjs && node scripts/build-frontend.mjs",
     "predeploy": "npm run build",
     "deploy": "wrangler deploy",
     "dev": "wrangler dev",
