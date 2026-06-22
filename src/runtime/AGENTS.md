@@ -46,7 +46,7 @@ the target URL, captures the sandbox's logs, and enforces abuse gates.
 
 ## Key Files
 - `loader.ts` - load/cache/invoke the Dynamic Worker (shell)
-- `harness.ts` / `harness-source.ts` - in-sandbox entrypoint; source string actually loaded
+- `harness-source.ts` - in-sandbox entrypoint as a module string (the `HARNESS_SOURCE` actually loaded into the Dynamic Worker)
 - `core.ts` - pure helpers: `hashCode`, `truncateBody`, error classifiers
 - `fetch-target.ts` - target fetch + RunInput snapshot
 - `log-session.ts` / `log-tailer.ts` / `log-cap.ts` / `log-types.ts` - log capture
@@ -56,5 +56,6 @@ the target URL, captures the sandbox's logs, and enforces abuse gates.
 ## Gotchas
 - Locally: CPU limits not enforced, tail not delivered, RATE_LIMITER is a no-op
   stub — see root AGENTS.md. These behaviors are deploy-verified only.
-- `harness.ts`'s `import userModule from './user.js'` only resolves inside the
-  loaded worker (injected by the loader), not at host compile time.
+- `HARNESS_SOURCE`'s `import userModule from './user.js'` only resolves inside the
+  loaded worker (the loader injects `user.js` into the `modules` map), not at host
+  compile time.

@@ -221,10 +221,10 @@ describe('runInLoader', () => {
 			}
 		});
 
-		it('cannot access env bindings not passed to loaded worker', async () => {
+		it('transform receives only INPUT keys via its parameter — no host bindings leak in', async () => {
 			const code = `export default function(input) {
-        // Only INPUT should be in env, passed as the function parameter
-        // Try to inspect what bindings are available by checking Object.keys
+        // The transform's only data source is the input parameter (env is {} in
+        // the loaded worker). Inspect its keys to confirm no host binding leaks.
         return Object.keys(input || {});
       }`;
 

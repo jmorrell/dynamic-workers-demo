@@ -62,8 +62,9 @@ export async function runInLoader(env: Env, input: RunInput, code: string, runId
 		});
 
 		// 3. Invoke the harness via RPC, passing INPUT per call (see note above).
-		// @ts-expect-error worker entrypoint has run() method dynamically
-		const entrypoint = worker.getEntrypoint() as { run(input: RunInput): Promise<RunResult> };
+		// getEntrypoint() is opaquely typed; the loaded mainModule (HARNESS_SOURCE)
+		// exposes run(input). Narrow via unknown since the types don't overlap.
+		const entrypoint = worker.getEntrypoint() as unknown as { run(input: RunInput): Promise<RunResult> };
 		const result = await entrypoint.run(input);
 		return result;
 	} catch (err) {
