@@ -29,7 +29,7 @@ Supporting unit tests: `hashCode` determinism, `truncateBody`, `classifyTransfor
 
 | AC | Type | Test location | What it verifies |
 |----|------|---------------|------------------|
-| AC2.1 | **deploy** (verified) | `test/examples/examples.spec.ts` (graceful degradation); **deploy-verified** (in-isolate success) | `markdown` (defuddle) returns markdown/clean text for an article fixture/URL. Local test verifies graceful degradation (returns ok:true with error field when linkedom fails in workerd). Deploy verification required: linkedom bundled with defuddle fails in workerd isolate with "ReferenceError: document is not defined" when Turndown tries to parse HTML. This is a fundamental incompatibility: both linkedom and happy-dom depend on Node.js-specific APIs (fs, vm, url, http, etc.) unavailable in workerd runtime. |
+| AC2.1 | integration | `test/examples/examples.spec.ts` | `markdown` (defuddle + linkedom, bundled via esbuild `platform:browser`) runs inside the workerd Dynamic Worker isolate and returns non-empty markdown for an article fixture. Verified locally through `runInLoader`; the transform's try/catch also keeps it total on unsuitable input (AC2.5). |
 | AC2.2 | unit + integration | `test/examples/parse.spec.ts`, `test/examples/examples.spec.ts` | `opengraph` returns OG tags found in the document |
 | AC2.3 | unit + integration | `test/examples/parse.spec.ts`, `examples.spec.ts` | `reddit` returns top comments parsed from a `.json` fixture |
 | AC2.4 | unit + integration | `test/examples/parse.spec.ts`, `examples.spec.ts` | `hackernews` returns top comments from an Algolia-item fixture |
@@ -79,7 +79,7 @@ Supporting: `LogSession` DO behavior (`test/runtime/log-session.spec.ts`).
 
 - [ ] **AC5.1** — deploy; run `cpu-spin`; observe sub-second `cpu_exceeded`; concurrent request to host succeeds.
 - [ ] **AC3.1/AC3.2/AC3.3** — deploy (if needed); confirm log lines + exception in `/api/run` response; over-cap sets `logsTruncated`.
-- [ ] **AC2.1 (DEPLOY)** — confirm `markdown` example works with a real article URL in the deployed instance. If linkedom continues to fail with "ReferenceError: document is not defined", it is fundamentally incompatible. Consider replacing with a lightweight markdown extractor that does not require a full DOM implementation, or leave as deploy-verified-only.
+- [ ] **AC2.1 (optional smoke-test)** — `markdown` is verified locally in-isolate via `test/examples/examples.spec.ts`; optionally smoke-test it against a real article URL on the deployed instance.
 - [ ] **AC4.1–AC4.4** — `npm run dev`; dropdown populated; example code + chips show; run suggested + custom URL; switch to custom code, edit, run; results show value/logs/errors/timing.
 - [ ] **AC4.5** — load `public/embed-example.html`; widget renders inside the iframe.
 - [ ] **AC6.1** — run something returning `<script>…</script>`; confirm escaped text displayed, no alert.
