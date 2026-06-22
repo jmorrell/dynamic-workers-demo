@@ -4,12 +4,12 @@ import { hashCode } from './core';
 import type { RunInput, RunResult } from './types';
 import { HARNESS_SOURCE } from './harness-source';
 
-// Compatibility date must match the host's compat date to ensure Dynamic Worker
-// has access to the same APIs as the host. The host's production compat date is 2026-06-22 (wrangler.jsonc).
-// However, local test runtime supports up to ~2026-03-10 and will fallback with a warning.
-// For tests to run locally, we use the maximum date the test runtime supports.
-// TODO: In production deployment, update this to match wrangler.jsonc (2026-06-22).
-const COMPAT_DATE = '2026-03-10';
+// The Dynamic Worker's compatibility date must match the host's compat date
+// (wrangler.jsonc) so loaded code runs against the same runtime APIs and the
+// globalOutbound: null block error text stays consistent. The local
+// vitest/wrangler runtime supports an older max date and automatically falls
+// back with a harmless warning; production uses this exact date.
+const COMPAT_DATE = '2026-06-22';
 
 /**
  * Runs untrusted code against a URL in a sandboxed dynamic worker.
