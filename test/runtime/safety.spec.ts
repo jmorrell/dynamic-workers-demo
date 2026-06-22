@@ -43,13 +43,8 @@ export default async function transform(input) {
 		it('classifyLoaderError maps CPU limit messages to cpu_exceeded', () => {
 			// Direct unit test of the pure classification function
 			// This verifies the mapping logic deterministically without relying on platform enforcement
-			const testCases = [
-				'error: exceeded cpu limit of 50ms',
-				'Worker exceeded limit',
-				'CPU limit exceeded',
-				'exceeded cpu',
-				'timeout due to resource limit',
-			];
+			// Narrow matcher: only CPU/time-budget signatures (requires "cpu" AND "exceeded"/"limit"/"time")
+			const testCases = ['error: exceeded cpu limit of 50ms', 'CPU limit exceeded', 'exceeded cpu', 'cpu time exceeded'];
 
 			testCases.forEach((message) => {
 				const kind = classifyLoaderError(message);
@@ -69,12 +64,13 @@ export default async function transform(input) {
 
 		describe('Host responsiveness under load (AC5.1 criterion)', () => {
 			it('host stays responsive to concurrent trivial requests', async () => {
-				// Verify host responsiveness by running multiple trivial transforms concurrently.
+				// Verify host responsiveness by running multiple concurrent trivial (non-spinning) transforms.
 				// This tests that the platform/host can handle concurrent load without blocking.
 				//
-				// Note: We don't test cpu-spin directly here because it creates an infinite loop
-				// and limits are NOT enforced locally (only on deployed Cloudflare infrastructure).
-				// The actual cpu-spin containment is verified on deploy (see deployment notes below).
+				// Note: We test concurrent trivial transforms here (not hostile spinning code)
+				// because limits are NOT enforced locally (only on deployed Cloudflare infrastructure).
+				// The actual cpu-spin containment and responsiveness under concurrent spin
+				// is verified on deploy (see deployment notes below).
 
 				const trivialCode = 'export default (input) => ({ received: true, url: input.url })';
 
