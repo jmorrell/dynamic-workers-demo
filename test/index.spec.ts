@@ -112,12 +112,16 @@ describe('POST /api/run handler', () => {
 			expect(response.status).toBe(400);
 		});
 
-		it('returns 404 when exampleId is unknown', async () => {
+		it('returns 404 for an unknown exampleId without fetching the target or invoking the loader', async () => {
+			// The url points at an unreachable host. If the handler proceeded into
+			// the pipeline it would call fetchTarget and respond 200 with an
+			// ok:false fetch_failed body. A 404 instead proves the unknown id is
+			// rejected up front, before any target fetch or loader invocation.
 			const request = new IncomingRequest('http://example.com/api/run', {
 				method: 'POST',
 				body: JSON.stringify({
 					exampleId: 'nonexistent-example',
-					url: 'http://example.com',
+					url: 'http://invalid-url-that-does-not-exist.test',
 				}),
 			});
 			const ctx = createExecutionContext();

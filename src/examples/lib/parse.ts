@@ -9,8 +9,11 @@ export function parseOpenGraph(html: string): Record<string, string> {
 	const result: Record<string, string> = {};
 
 	try {
-		// Match og: and twitter: meta tags
-		// Handles both property="" and name="" attributes
+		// Match og: and twitter: meta tags. Handles both property="" and name=""
+		// attributes. Known tolerance: this expects `content` to follow
+		// property/name directly — tags with intervening attributes or reversed
+		// order are skipped. That only narrows coverage; the function stays total
+		// (returns whatever it matched, never throws — AC2.5).
 		const ogRegex = /<meta\s+(?:property|name)=["']([a-z:]+)["']\s+content=["']([^"']*)["']/gi;
 		let match;
 
