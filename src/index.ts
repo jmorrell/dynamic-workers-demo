@@ -3,8 +3,18 @@
 import { fetchTarget } from './runtime/fetch-target';
 import { runInLoader } from './runtime/loader';
 import type { RunResult } from './runtime/types';
+import { listExamples, getExample } from './examples/manifest';
 
-// pattern: Imperative Shell
+async function handleExamples(request: Request): Promise<Response> {
+	// Only GET allowed
+	if (request.method !== 'GET') {
+		return new Response('Method not allowed', { status: 405 });
+	}
+
+	const examples = listExamples();
+	return new Response(JSON.stringify(examples), { status: 200, headers: { 'content-type': 'application/json' } });
+}
+
 async function handleRun(request: Request, env: Env): Promise<Response> {
 	// Validate method
 	if (request.method !== 'POST') {
@@ -20,21 +30,78 @@ async function handleRun(request: Request, env: Env): Promise<Response> {
 	}
 
 	// Validate request shape
-	if (typeof body !== 'object' || body === null || !('customCode' in body) || !('url' in body)) {
+	if (typeof body !== 'object' || body === null || !('url' in body)) {
 		return new Response(
 			JSON.stringify({
-				error: 'Missing required fields: customCode, url',
+				error: 'Missing required field: url',
 			}),
 			{ status: 400, headers: { 'content-type': 'application/json' } },
 		);
 	}
 
-	const { customCode, url } = body as { customCode: unknown; url: unknown };
+	const { exampleId, customCode, url } = body as { exampleId: unknown; customCode: unknown; url: unknown };
 
-	if (typeof customCode !== 'string' || typeof url !== 'string') {
+	// Validate url
+	if (typeof url !== 'string') {
 		return new Response(
 			JSON.stringify({
-				error: 'customCode and url must be strings',
+				error: 'url must be a string',
+			}),
+			{ status: 400, headers: { 'content-type': 'application/json' } },
+		);
+	}
+
+	// Resolve code: either from exampleId or customCode, but not both
+	let code: string;
+
+	if (exampleId !== undefined) {
+		// exampleId provided - look it up
+		if (customCode !== undefined) {
+			return new Response(
+				JSON.stringify({
+					error: 'Cannot specify both exampleId and customCode - provide exactly one',
+				}),
+				{ status: 400, headers: { 'content-type': 'application/json' } },
+			);
+		}
+
+		if (typeof exampleId !== 'string') {
+			return new Response(
+				JSON.stringify({
+					error: 'exampleId must be a string',
+				}),
+				{ status: 400, headers: { 'content-type': 'application/json' } },
+			);
+		}
+
+		const example = getExample(exampleId);
+		if (!example) {
+			return new Response(
+				JSON.stringify({
+					error: `Unknown example: ${exampleId}`,
+				}),
+				{ status: 404, headers: { 'content-type': 'application/json' } },
+			);
+		}
+
+		code = example.code;
+	} else if (customCode !== undefined) {
+		// customCode provided
+		if (typeof customCode !== 'string') {
+			return new Response(
+				JSON.stringify({
+					error: 'customCode must be a string',
+				}),
+				{ status: 400, headers: { 'content-type': 'application/json' } },
+			);
+		}
+
+		code = customCode;
+	} else {
+		// Neither provided
+		return new Response(
+			JSON.stringify({
+				error: 'Must provide either exampleId or customCode',
 			}),
 			{ status: 400, headers: { 'content-type': 'application/json' } },
 		);
@@ -57,7 +124,7 @@ async function handleRun(request: Request, env: Env): Promise<Response> {
 
 	// Run code in loader
 	const startTime = performance.now();
-	const result = await runInLoader(env, fetchOutcome.input, customCode);
+	const result = await runInLoader(env, fetchOutcome.input, code);
 	const timingMs = Math.round(performance.now() - startTime);
 
 	return new Response(
@@ -74,6 +141,11 @@ async function handleRun(request: Request, env: Env): Promise<Response> {
 export default {
 	async fetch(request: Request, env: Env): Promise<Response> {
 		const url = new URL(request.url);
+
+		// Route GET /api/examples
+		if (url.pathname === '/api/examples') {
+			return handleExamples(request);
+		}
 
 		// Route POST /api/run
 		if (url.pathname === '/api/run') {

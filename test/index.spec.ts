@@ -4,6 +4,40 @@ import worker from '../src/index';
 
 const IncomingRequest = Request<unknown, IncomingRequestCfProperties>;
 
+describe('GET /api/examples handler', () => {
+	it('returns 200 with example list', async () => {
+		const request = new IncomingRequest('http://example.com/api/examples', {
+			method: 'GET',
+		});
+		const ctx = createExecutionContext();
+		const response = await worker.fetch(request, env, ctx);
+		await waitOnExecutionContext(ctx);
+
+		expect(response.status).toBe(200);
+		expect(response.headers.get('content-type')).toContain('application/json');
+
+		const data = await response.json<Array<{ id: string; title: string; description: string }>>();
+		expect(Array.isArray(data)).toBe(true);
+		expect(data.length).toBe(6);
+
+		// Should not contain code field
+		for (const example of data) {
+			expect('code' in example).toBe(false);
+		}
+	});
+
+	it('returns 405 for POST /api/examples', async () => {
+		const request = new IncomingRequest('http://example.com/api/examples', {
+			method: 'POST',
+		});
+		const ctx = createExecutionContext();
+		const response = await worker.fetch(request, env, ctx);
+		await waitOnExecutionContext(ctx);
+
+		expect(response.status).toBe(405);
+	});
+});
+
 describe('POST /api/run handler', () => {
 	beforeEach(() => {
 		vi.clearAllMocks();
@@ -41,7 +75,7 @@ describe('POST /api/run handler', () => {
 			expect(response.status).toBe(400);
 		});
 
-		it('returns 400 when customCode is missing', async () => {
+		it('returns 400 when neither customCode nor exampleId provided', async () => {
 			const request = new IncomingRequest('http://example.com/api/run', {
 				method: 'POST',
 				body: JSON.stringify({ url: 'http://example.com' }),
@@ -62,15 +96,73 @@ describe('POST /api/run handler', () => {
 			await waitOnExecutionContext(ctx);
 			expect(response.status).toBe(400);
 		});
+
+		it('returns 400 when both customCode and exampleId provided', async () => {
+			const request = new IncomingRequest('http://example.com/api/run', {
+				method: 'POST',
+				body: JSON.stringify({
+					customCode: 'export default () => 42',
+					exampleId: 'opengraph',
+					url: 'http://example.com',
+				}),
+			});
+			const ctx = createExecutionContext();
+			const response = await worker.fetch(request, env, ctx);
+			await waitOnExecutionContext(ctx);
+			expect(response.status).toBe(400);
+		});
+
+		it('returns 404 when exampleId is unknown', async () => {
+			const request = new IncomingRequest('http://example.com/api/run', {
+				method: 'POST',
+				body: JSON.stringify({
+					exampleId: 'nonexistent-example',
+					url: 'http://example.com',
+				}),
+			});
+			const ctx = createExecutionContext();
+			const response = await worker.fetch(request, env, ctx);
+			await waitOnExecutionContext(ctx);
+			expect(response.status).toBe(404);
+		});
 	});
 
 	describe('happy path - successful transform', () => {
-		it('POST /api/run with valid request returns 200 and result structure', async () => {
+		it('POST /api/run with customCode returns 200 and result structure', async () => {
 			const transformCode = 'export default (input) => input.status';
 			const request = new IncomingRequest('http://example.com/api/run', {
 				method: 'POST',
 				body: JSON.stringify({
 					customCode: transformCode,
+					url: 'http://example.com/test',
+				}),
+			});
+			const ctx = createExecutionContext();
+			const response = await worker.fetch(request, env, ctx);
+			await waitOnExecutionContext(ctx);
+
+			expect(response.status).toBe(200);
+			expect(response.headers.get('content-type')).toContain('application/json');
+
+			const data = await response.json<{
+				ok: boolean;
+				result?: unknown;
+				error?: unknown;
+				timingMs?: number;
+			}>();
+
+			expect(data).toHaveProperty('ok');
+			if (data.ok) {
+				expect(data).toHaveProperty('result');
+				expect(data).toHaveProperty('timingMs');
+			}
+		});
+
+		it('POST /api/run with exampleId resolves and runs the bundled code', async () => {
+			const request = new IncomingRequest('http://example.com/api/run', {
+				method: 'POST',
+				body: JSON.stringify({
+					exampleId: 'opengraph',
 					url: 'http://example.com/test',
 				}),
 			});
