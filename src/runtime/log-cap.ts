@@ -7,6 +7,9 @@ import type { LogLine, LogBundle } from './log-types';
  * Returns a new bundle with appended lines or truncation flag set if caps exceeded.
  * Total function: always returns a valid LogBundle, never throws.
  *
+ * Note: The byte cap counts only `message` UTF-8 bytes (not level/JSON overhead).
+ * A single line larger than maxBytes on an empty bundle is dropped entirely (not kept partially).
+ *
  * @param current - Current log bundle to append to
  * @param incoming - New log lines to append
  * @param maxLines - Maximum number of lines allowed in bundle

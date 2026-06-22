@@ -6,6 +6,8 @@ import { LOG_MAX_LINES, LOG_MAX_BYTES } from './log-types';
 import { appendWithCap } from './log-cap';
 
 export class LogSession extends DurableObject {
+	// State is in-memory only (not ctx.storage) — a conscious choice for the short single-request rendezvous.
+	// An eviction between tail-append and host-read would lose logs (acceptable for the demo).
 	private bundle: LogBundle = { lines: [], truncated: false };
 	private appendedAtLeastOnce = false;
 
