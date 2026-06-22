@@ -35,8 +35,8 @@ export function truncateBody(
   // Try to decode progressively shorter byte sequences until we find a valid one
   while (cutPoint > 0) {
     const truncated = encoded.slice(0, cutPoint);
-    const decoder = new TextDecoder('utf-8', { fatal: true });
     try {
+      const decoder = new TextDecoder('utf-8', { fatal: true } as TextDecoderConstructorOptions);
       result = decoder.decode(truncated);
       break;
     } catch {
@@ -57,11 +57,13 @@ export function truncateBody(
 export function classifyTransformError(message: string): RunErrorKind {
   const lower = message.toLowerCase();
 
-  // Match network-blocked signatures
+  // Match network-blocked signatures (globalOutbound: null, fetch restrictions)
   if (
     lower.includes('disallowed') ||
     lower.includes('not allowed') ||
-    lower.includes('globaloutbound')
+    lower.includes('globaloutbound') ||
+    lower.includes('not permitted to access the internet') ||
+    lower.includes('cannot access the internet')
   ) {
     return 'network_blocked';
   }

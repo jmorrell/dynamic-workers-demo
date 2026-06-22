@@ -26,7 +26,7 @@ export async function runInLoader(
 
     // 2. Get or create the worker via the loader
     const worker = await env.LOADER.get(id, async () => ({
-      compatibilityDate: '2026-06-22',
+      compatibilityDate: '2026-03-17',
       compatibilityFlags: ['nodejs_compat'],
       mainModule: 'harness.js',
       modules: {

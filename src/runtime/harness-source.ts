@@ -16,7 +16,9 @@ function classifyTransformError(message) {
   if (
     lower.includes('disallowed') ||
     lower.includes('not allowed') ||
-    lower.includes('globaloutbound')
+    lower.includes('globaloutbound') ||
+    lower.includes('not permitted to access the internet') ||
+    lower.includes('cannot access the internet')
   ) {
     return 'network_blocked';
   }
@@ -25,7 +27,7 @@ function classifyTransformError(message) {
 
 export default class Harness extends WorkerEntrypoint {
   async run() {
-    const input = this.env.INPUT;
+    const input = (this.env).INPUT;
 
     const transform = (userModule?.default) ?? userModule;
     if (typeof transform !== 'function') {
