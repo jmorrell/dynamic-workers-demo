@@ -1,6 +1,7 @@
 // pattern: Imperative Shell
 
-import { escapeHtml, formatRunResponse, exampleOptions } from './lib/render';
+import { formatRunResponse, exampleOptions, type RunResponse } from './lib/render';
+import { CodeJar } from 'codejar';
 import Prism from 'prismjs';
 import 'prismjs/components/prism-javascript';
 
@@ -40,6 +41,20 @@ const logsContainerEl = document.getElementById('logs-container') as HTMLDivElem
 const timingInfoEl = document.getElementById('timing-info') as HTMLDivElement;
 const suggestedUrlsSection = document.getElementById('suggested-urls-section') as HTMLDivElement;
 const suggestedUrlsEl = document.getElementById('suggested-urls') as HTMLDivElement;
+
+// CodeJar turns the editor div into an editable, syntax-highlighted code field
+// with cursor preservation across re-highlights. setEditorCode() toggles between
+// read-only (example source display) and editable (custom code).
+const jar = CodeJar(editorDiv, (el) => {
+	const code = el.textContent ?? '';
+	el.innerHTML = Prism.highlight(code, Prism.languages.javascript, 'javascript');
+});
+
+function setEditorCode(code: string, editable: boolean): void {
+	jar.updateCode(code);
+	editorDiv.setAttribute('contenteditable', editable ? 'true' : 'false');
+	editorDiv.classList.toggle('editable', editable);
+}
 
 // Initialize on page load
 document.addEventListener('DOMContentLoaded', async () => {
@@ -91,7 +106,7 @@ function onExampleSelectChange(): void {
 			displaySuggestedUrls(example.suggestedUrls);
 		}
 	} else {
-		editorDiv.textContent = '// Select an example or enable custom code to start';
+		setEditorCode('// Select an example or enable custom code to start', false);
 		suggestedUrlsSection.style.display = 'none';
 	}
 
@@ -99,8 +114,9 @@ function onExampleSelectChange(): void {
 }
 
 function displayExampleCode(example: Example): void {
-	editorDiv.textContent = example.source;
-	highlightEditorContent();
+	// Example source is shown read-only; running an example sends its exampleId
+	// (the bundled code), not the displayed source.
+	setEditorCode(example.source, false);
 }
 
 function displaySuggestedUrls(urls: ReadonlyArray<string>): void {
@@ -133,22 +149,13 @@ function onCustomCodeToggleChange(): void {
 	exampleSelect.value = '';
 
 	if (state.isCustomCode) {
-		editorDiv.textContent =
-			'// Write your custom code here\nfetch("https://example.com")\n\t.then(r => r.text())\n\t.catch(e => e.message)';
-		highlightEditorContent();
+		setEditorCode('// Write your custom code here\nexport default (input) => {\n\treturn input.status;\n}', true);
 		suggestedUrlsSection.style.display = 'none';
 	} else {
-		editorDiv.textContent = '// Select an example or enable custom code to start';
-		highlightEditorContent();
+		setEditorCode('// Select an example or enable custom code to start', false);
 	}
 
 	updateRunButton();
-}
-
-function highlightEditorContent(): void {
-	if (!editorDiv.textContent) return;
-	const highlighted = Prism.highlight(editorDiv.textContent, Prism.languages.javascript, 'javascript');
-	editorDiv.innerHTML = highlighted;
 }
 
 function updateRunButton(): void {
@@ -167,7 +174,7 @@ async function onRunClick(): Promise<void> {
 	const payload: Record<string, unknown> = { url };
 
 	if (state.isCustomCode) {
-		payload.customCode = editorDiv.textContent;
+		payload.customCode = jar.toString();
 	} else if (state.selectedExampleId) {
 		payload.exampleId = state.selectedExampleId;
 	}
@@ -182,7 +189,8 @@ async function onRunClick(): Promise<void> {
 		if (!response.ok) {
 			resultsSection.className = 'error';
 			resultsTitleEl.textContent = 'Error';
-			resultsBodyEl.textContent = escapeHtml(`HTTP ${response.status}: ${response.statusText}`);
+			// textContent renders the string literally (inert) — no escaping needed.
+			resultsBodyEl.textContent = `HTTP ${response.status}: ${response.statusText}`;
 			logsContainerEl.innerHTML = '';
 			timingInfoEl.innerHTML = '';
 			resultsSection.classList.remove('empty');
@@ -191,12 +199,12 @@ async function onRunClick(): Promise<void> {
 			return;
 		}
 
-		const data = await response.json();
+		const data = (await response.json()) as RunResponse;
 		renderResults(data);
 	} catch (error) {
 		resultsSection.className = 'error';
 		resultsTitleEl.textContent = 'Error';
-		resultsBodyEl.textContent = escapeHtml(`Network error: ${String(error)}`);
+		resultsBodyEl.textContent = `Network error: ${String(error)}`;
 		logsContainerEl.innerHTML = '';
 		timingInfoEl.innerHTML = '';
 		resultsSection.classList.remove('empty');
@@ -206,49 +214,47 @@ async function onRunClick(): Promise<void> {
 	updateRunButton();
 }
 
-function renderResults(data: unknown): void {
-	const formatted = formatRunResponse(data as any);
+function renderResults(data: RunResponse): void {
+	const formatted = formatRunResponse(data);
 
 	resultsSection.className = formatted.tone;
 	resultsTitleEl.textContent = formatted.title;
 	resultsBodyEl.innerHTML = '';
 
-	// Main result body (already escaped by formatRunResponse)
+	// Render the value/error via textContent — the security boundary that makes
+	// any HTML/script in run output inert (AC6.1). Never innerHTML with run data.
 	const bodyPre = document.createElement('pre');
 	bodyPre.textContent = formatted.body;
 	resultsBodyEl.appendChild(bodyPre);
 
 	// Logs
 	logsContainerEl.innerHTML = '';
-	const runData = data as any;
-	if (runData.logs && Array.isArray(runData.logs)) {
-		if (runData.logs.length > 0) {
-			const logsLabel = document.createElement('strong');
-			logsLabel.textContent = 'Logs:';
-			logsContainerEl.appendChild(logsLabel);
+	if (data.logs.length > 0) {
+		const logsLabel = document.createElement('strong');
+		logsLabel.textContent = 'Logs:';
+		logsContainerEl.appendChild(logsLabel);
 
-			for (const log of runData.logs) {
-				const logLine = document.createElement('div');
-				logLine.style.color = log.level === 'error' ? '#c00' : log.level === 'warn' ? '#d70' : '#666';
-				logLine.textContent = escapeHtml(`[${log.level}] ${log.message}`);
-				logsContainerEl.appendChild(logLine);
-			}
+		for (const log of data.logs) {
+			const logLine = document.createElement('div');
+			logLine.style.color = log.level === 'error' ? '#c00' : log.level === 'warn' ? '#d70' : '#666';
+			logLine.textContent = `[${log.level}] ${log.message}`;
+			logsContainerEl.appendChild(logLine);
 		}
+	}
 
-		if (runData.logsTruncated) {
-			const truncated = document.createElement('div');
-			truncated.className = 'logs-truncated';
-			truncated.textContent = 'Logs were truncated';
-			logsContainerEl.appendChild(truncated);
-		}
+	if (data.logsTruncated) {
+		const truncated = document.createElement('div');
+		truncated.className = 'logs-truncated';
+		truncated.textContent = 'Logs were truncated';
+		logsContainerEl.appendChild(truncated);
 	}
 
 	// Timing info
 	timingInfoEl.innerHTML = '';
-	if (typeof runData.timingMs === 'number') {
+	if (typeof data.timingMs === 'number') {
 		const timing = document.createElement('div');
 		timing.className = 'timing';
-		timing.textContent = escapeHtml(`Execution time: ${runData.timingMs}ms`);
+		timing.textContent = `Execution time: ${data.timingMs}ms`;
 		timingInfoEl.appendChild(timing);
 	}
 

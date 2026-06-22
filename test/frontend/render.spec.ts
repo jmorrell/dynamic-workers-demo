@@ -1,5 +1,5 @@
-import {describe, expect, it} from 'vitest';
-import {escapeHtml, formatResultValue, formatRunResponse, exampleOptions} from '../../frontend/lib/render';
+import { describe, expect, it } from 'vitest';
+import { escapeHtml, formatResultValue, formatRunResponse, exampleOptions } from '../../frontend/lib/render';
 
 describe('render helpers', () => {
 	describe('escapeHtml', () => {
@@ -41,7 +41,7 @@ describe('render helpers', () => {
 
 	describe('formatResultValue', () => {
 		it('formats objects as JSON', () => {
-			const result = formatResultValue({foo: 'bar', baz: 42});
+			const result = formatResultValue({ foo: 'bar', baz: 42 });
 			expect(result).toContain('foo');
 			expect(result).toContain('bar');
 			expect(result).toContain('baz');
@@ -85,7 +85,7 @@ describe('render helpers', () => {
 		it('formats successful response with ok result', () => {
 			const response = {
 				ok: true,
-				result: {value: 42, type: 'number'},
+				result: { value: 42, type: 'number' },
 				logs: [],
 				logsTruncated: false,
 				timingMs: 100,
@@ -99,7 +99,7 @@ describe('render helpers', () => {
 		it('formats error response with kind and message', () => {
 			const response = {
 				ok: false,
-				error: {kind: 'ReferenceError', message: 'x is not defined'},
+				error: { kind: 'ReferenceError', message: 'x is not defined' },
 				logs: [],
 				logsTruncated: false,
 				timingMs: 100,
@@ -110,7 +110,7 @@ describe('render helpers', () => {
 			expect(formatted.body).toContain('x is not defined');
 		});
 
-		it('escapes result value in successful response', () => {
+		it('preserves the raw result value verbatim (escaping is the renderer textContent job)', () => {
 			const response = {
 				ok: true,
 				result: '<script>alert(1)</script>',
@@ -119,32 +119,34 @@ describe('render helpers', () => {
 				timingMs: 100,
 			};
 			const formatted = formatRunResponse(response);
-			expect(formatted.body).not.toContain('<script>');
+			// formatRunResponse must NOT pre-escape — main.ts renders via textContent,
+			// which makes the raw string inert. Pre-escaping here would double-escape.
+			expect(formatted.body).toContain('<script>alert(1)</script>');
 		});
 
-		it('escapes error message in error response', () => {
+		it('preserves the raw error message verbatim', () => {
 			const response = {
 				ok: false,
-				error: {kind: 'Error', message: '<img src=x onerror=alert(1)>'},
+				error: { kind: 'Error', message: '<img src=x onerror=alert(1)>' },
 				logs: [],
 				logsTruncated: false,
 				timingMs: 100,
 			};
 			const formatted = formatRunResponse(response);
-			expect(formatted.body).not.toContain('<img');
+			expect(formatted.body).toContain('<img src=x onerror=alert(1)>');
 		});
 	});
 
 	describe('exampleOptions', () => {
 		it('maps examples to options with id and title', () => {
 			const examples = [
-				{id: '1', title: 'Fetch Example', description: 'desc', suggestedUrls: [], source: 'code'},
-				{id: '2', title: 'Timeout Example', description: 'desc', suggestedUrls: [], source: 'code'},
+				{ id: '1', title: 'Fetch Example', description: 'desc', suggestedUrls: [], source: 'code' },
+				{ id: '2', title: 'Timeout Example', description: 'desc', suggestedUrls: [], source: 'code' },
 			];
 			const options = exampleOptions(examples);
 			expect(options).toHaveLength(2);
-			expect(options[0]).toEqual({id: '1', title: 'Fetch Example'});
-			expect(options[1]).toEqual({id: '2', title: 'Timeout Example'});
+			expect(options[0]).toEqual({ id: '1', title: 'Fetch Example' });
+			expect(options[1]).toEqual({ id: '2', title: 'Timeout Example' });
 		});
 
 		it('returns empty array for empty examples', () => {
