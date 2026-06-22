@@ -4,26 +4,162 @@ import {
 	waitOnExecutionContext,
 	SELF,
 } from "cloudflare:test";
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, beforeEach, vi } from "vitest";
 import worker from "../src/index";
 
-// For now, you'll need to do something like this to get a correctly-typed
-// `Request` to pass to `worker.fetch()`.
 const IncomingRequest = Request<unknown, IncomingRequestCfProperties>;
 
-describe("Hello World worker", () => {
-	it("responds with Hello World! (unit style)", async () => {
-		const request = new IncomingRequest("http://example.com");
-		// Create an empty context to pass to `worker.fetch()`.
-		const ctx = createExecutionContext();
-		const response = await worker.fetch(request, env, ctx);
-		// Wait for all `Promise`s passed to `ctx.waitUntil()` to settle before running test assertions
-		await waitOnExecutionContext(ctx);
-		expect(await response.text()).toMatchInlineSnapshot(`"Hello World!"`);
+describe("POST /api/run handler", () => {
+	beforeEach(() => {
+		vi.clearAllMocks();
 	});
 
-	it("responds with Hello World! (integration style)", async () => {
-		const response = await SELF.fetch("https://example.com");
-		expect(await response.text()).toMatchInlineSnapshot(`"Hello World!"`);
+	describe("request routing", () => {
+		it("returns 404 for wrong path", async () => {
+			const request = new IncomingRequest("http://example.com/wrong-path", {
+				method: "POST",
+			});
+			const ctx = createExecutionContext();
+			const response = await worker.fetch(request, env, ctx);
+			await waitOnExecutionContext(ctx);
+			expect(response.status).toBe(404);
+		});
+
+		it("returns 405 for GET /api/run", async () => {
+			const request = new IncomingRequest("http://example.com/api/run", {
+				method: "GET",
+			});
+			const ctx = createExecutionContext();
+			const response = await worker.fetch(request, env, ctx);
+			await waitOnExecutionContext(ctx);
+			expect(response.status).toBe(405);
+		});
+
+		it("returns 400 for malformed JSON body", async () => {
+			const request = new IncomingRequest("http://example.com/api/run", {
+				method: "POST",
+				body: "invalid json",
+			});
+			const ctx = createExecutionContext();
+			const response = await worker.fetch(request, env, ctx);
+			await waitOnExecutionContext(ctx);
+			expect(response.status).toBe(400);
+		});
+
+		it("returns 400 when customCode is missing", async () => {
+			const request = new IncomingRequest("http://example.com/api/run", {
+				method: "POST",
+				body: JSON.stringify({ url: "http://example.com" }),
+			});
+			const ctx = createExecutionContext();
+			const response = await worker.fetch(request, env, ctx);
+			await waitOnExecutionContext(ctx);
+			expect(response.status).toBe(400);
+		});
+
+		it("returns 400 when url is missing", async () => {
+			const request = new IncomingRequest("http://example.com/api/run", {
+				method: "POST",
+				body: JSON.stringify({ customCode: "export default () => 42" }),
+			});
+			const ctx = createExecutionContext();
+			const response = await worker.fetch(request, env, ctx);
+			await waitOnExecutionContext(ctx);
+			expect(response.status).toBe(400);
+		});
+	});
+
+	describe("happy path - successful transform", () => {
+		it("POST /api/run with valid request returns 200 and result structure", async () => {
+			const transformCode = "export default (input) => input.status";
+			const request = new IncomingRequest("http://example.com/api/run", {
+				method: "POST",
+				body: JSON.stringify({
+					customCode: transformCode,
+					url: "http://example.com/test",
+				}),
+			});
+			const ctx = createExecutionContext();
+			const response = await worker.fetch(request, env, ctx);
+			await waitOnExecutionContext(ctx);
+
+			expect(response.status).toBe(200);
+			expect(response.headers.get("content-type")).toContain("application/json");
+
+			const data = await response.json<{
+				ok: boolean;
+				result?: unknown;
+				error?: unknown;
+				timingMs?: number;
+			}>();
+
+			expect(data).toHaveProperty("ok");
+			if (data.ok) {
+				expect(data).toHaveProperty("result");
+				expect(data).toHaveProperty("timingMs");
+			}
+		});
+	});
+
+	describe("fetch failure scenarios", () => {
+		it("returns fetch error when target URL fails", async () => {
+			const transformCode = "export default (input) => input.status";
+			const request = new IncomingRequest("http://example.com/api/run", {
+				method: "POST",
+				body: JSON.stringify({
+					customCode: transformCode,
+					url: "http://invalid-url-that-does-not-exist.test",
+				}),
+			});
+			const ctx = createExecutionContext();
+			const response = await worker.fetch(request, env, ctx);
+			await waitOnExecutionContext(ctx);
+
+			expect(response.status).toBe(200);
+
+			const data = await response.json<{
+				ok: boolean;
+				error?: { kind: string };
+			}>();
+
+			expect(data.ok).toBe(false);
+			if (!data.ok && data.error) {
+				expect(data.error.kind).toBe("fetch_failed");
+			}
+		});
+	});
+
+	describe("response format", () => {
+		it("response has content-type application/json", async () => {
+			const request = new IncomingRequest("http://example.com/api/run", {
+				method: "POST",
+				body: JSON.stringify({
+					customCode: "export default () => 42",
+					url: "http://example.com",
+				}),
+			});
+			const ctx = createExecutionContext();
+			const response = await worker.fetch(request, env, ctx);
+			await waitOnExecutionContext(ctx);
+
+			expect(response.headers.get("content-type")).toContain("application/json");
+		});
+
+		it("includes timingMs in response", async () => {
+			const request = new IncomingRequest("http://example.com/api/run", {
+				method: "POST",
+				body: JSON.stringify({
+					customCode: "export default () => 42",
+					url: "http://example.com",
+				}),
+			});
+			const ctx = createExecutionContext();
+			const response = await worker.fetch(request, env, ctx);
+			await waitOnExecutionContext(ctx);
+
+			const data = await response.json<{ timingMs?: number }>();
+			expect(typeof data.timingMs).toBe("number");
+			expect(data.timingMs).toBeGreaterThanOrEqual(0);
+		});
 	});
 });
