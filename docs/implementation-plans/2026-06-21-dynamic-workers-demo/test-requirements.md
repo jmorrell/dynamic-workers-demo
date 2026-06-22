@@ -40,10 +40,12 @@ Supporting unit tests: `hashCode` determinism, `truncateBody`, `classifyTransfor
 
 | AC | Type | Test location | What it verifies |
 |----|------|---------------|------------------|
-| AC3.1 | integration **+ deploy** | `test/runtime/logs.spec.ts`; **deploy** if local tail delivery is unreliable | N `console.log` calls → N lines in response |
-| AC3.2 | integration **+ deploy** | `test/runtime/logs.spec.ts` | thrown exception appears in returned logs |
-| AC3.3 | unit + integration | `test/runtime/log-cap.spec.ts`, `logs.spec.ts` | output beyond cap truncated, `logsTruncated` set |
-| AC3.4 | unit + integration | `log-cap.spec.ts`, `log-session.spec.ts`, `logs.spec.ts` | no-log run → empty list, not an error |
+| AC3.1 | **deploy** (local: skipped) | `test/runtime/logs.spec.ts` (skipped); real deploy test | N `console.log` calls → N lines in response |
+| AC3.2 | **deploy** (local: skipped) | `test/runtime/logs.spec.ts` (skipped); real deploy test | thrown exception appears in returned logs |
+| AC3.3 | unit + integration | `test/runtime/log-cap.spec.ts`, `test/runtime/log-session.spec.ts`, `test/runtime/logs.spec.ts` | output beyond cap truncated, `logsTruncated` set |
+| AC3.4 | unit + integration | `test/runtime/log-cap.spec.ts`, `test/runtime/log-session.spec.ts`, `test/runtime/logs.spec.ts` | no-log run → empty list, not an error |
+
+**Local vitest limitation:** Tail workers do not deliver events in the `@cloudflare/vitest-pool-workers` runtime, so the full AC3.1/AC3.2 path (tail → LogTailer → LogSession) cannot be tested locally. The infrastructure is in place and tested at component level; AC3.1 and AC3.2 require deploy verification on the real Cloudflare Workers platform. AC3.3 and AC3.4 are fully tested locally via direct LogSession testing.
 
 Supporting: `LogSession` DO behavior (`test/runtime/log-session.spec.ts`).
 
