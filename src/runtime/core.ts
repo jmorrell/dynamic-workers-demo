@@ -114,22 +114,23 @@ export function classifyTransformError(message: string): RunErrorKind {
 
 /**
  * Classifies a loader-level error message to determine the error kind.
- * Maps CPU/resource limit exceeded messages to "cpu_exceeded", others to "loader_failed".
+ * Maps CPU/time-budget limit-exceeded messages to "cpu_exceeded", others to "loader_failed".
  *
- * Pure function for classifying loader-level exceptions. Adjusted substrings
- * are finalized against the real thrown message in later tasks.
+ * Pure function for classifying loader-level exceptions. Intentionally narrow to
+ * avoid collisions with sub-request-limit, memory-limit, RPC-timeout, and module-resolution
+ * failures (which should map to "loader_failed" for correct containment attribution).
+ *
+ * Matches CPU/time budget signatures only:
+ * - "cpu" (e.g., "exceeded cpu", "cpu time", "cpu limit")
+ * - "exceeded cpu" or "cpu exceeded" (explicit CPU context)
+ * - Future: finalized against real deploy-captured CPU-exceeded message
  */
 export function classifyLoaderError(message: string): RunErrorKind {
 	const lower = message.toLowerCase();
 
-	// Match CPU limit and resource exhaustion signatures
-	if (
-		lower.includes('cpu') ||
-		lower.includes('limit') ||
-		lower.includes('exceeded') ||
-		lower.includes('timeout') ||
-		lower.includes('resource')
-	) {
+	// Match CPU/time-budget signatures only. Drop generic matchers ("limit", "resource", "timeout")
+	// to avoid misclassifying sub-request/memory/RPC failures.
+	if (lower.includes('cpu') && (lower.includes('exceeded') || lower.includes('limit') || lower.includes('time'))) {
 		return 'cpu_exceeded';
 	}
 

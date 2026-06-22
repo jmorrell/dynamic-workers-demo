@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { hashCode, truncateBody, classifyTransformError } from '@/runtime/core';
+import { hashCode, truncateBody, classifyTransformError, classifyLoaderError } from '@/runtime/core';
 
 describe('hashCode', () => {
 	it('returns consistent hash for same input', async () => {
@@ -116,37 +116,65 @@ describe('classifyTransformError', () => {
 });
 
 describe('classifyLoaderError', () => {
-	it('returns cpu_exceeded for cpu limit message', async () => {
-		// Import inside test to avoid circular imports
-		const { classifyLoaderError } = await import('@/runtime/core');
+	it('returns cpu_exceeded for cpu limit message', () => {
 		const message = 'error: exceeded cpu limit of 50ms';
 		const kind = classifyLoaderError(message);
 		expect(kind).toBe('cpu_exceeded');
 	});
 
-	it('returns cpu_exceeded for limit exceeded message', async () => {
-		const { classifyLoaderError } = await import('@/runtime/core');
-		const message = 'Worker exceeded limit';
+	it('returns cpu_exceeded for cpu exceeded message', () => {
+		const message = 'Worker exceeded cpu';
 		const kind = classifyLoaderError(message);
 		expect(kind).toBe('cpu_exceeded');
 	});
 
-	it('returns loader_failed for unrelated error message', async () => {
-		const { classifyLoaderError } = await import('@/runtime/core');
+	it('returns cpu_exceeded for cpu time message', () => {
+		const message = 'exceeded cpu time budget';
+		const kind = classifyLoaderError(message);
+		expect(kind).toBe('cpu_exceeded');
+	});
+
+	it('returns loader_failed for subrequest limit message', () => {
+		// Sub-request limits should NOT match (too broad matcher caused misclassification)
+		const message = 'too many subrequests';
+		const kind = classifyLoaderError(message);
+		expect(kind).toBe('loader_failed');
+	});
+
+	it('returns loader_failed for subrequest limit exceeded message', () => {
+		// Subrequest limit exceeded should map to loader_failed, not cpu_exceeded
+		const message = 'subrequest limit exceeded (max 5)';
+		const kind = classifyLoaderError(message);
+		expect(kind).toBe('loader_failed');
+	});
+
+	it('returns loader_failed for memory limit message', () => {
+		// Memory limits should map to loader_failed, not cpu_exceeded
+		const message = 'memory limit exceeded';
+		const kind = classifyLoaderError(message);
+		expect(kind).toBe('loader_failed');
+	});
+
+	it('returns loader_failed for timeout message', () => {
+		// Generic timeout (RPC, module resolution) should map to loader_failed
+		const message = 'RPC timeout';
+		const kind = classifyLoaderError(message);
+		expect(kind).toBe('loader_failed');
+	});
+
+	it('returns loader_failed for unrelated error message', () => {
 		const message = 'something went wrong in the loader';
 		const kind = classifyLoaderError(message);
 		expect(kind).toBe('loader_failed');
 	});
 
-	it('returns loader_failed for empty message', async () => {
-		const { classifyLoaderError } = await import('@/runtime/core');
+	it('returns loader_failed for empty message', () => {
 		const message = '';
 		const kind = classifyLoaderError(message);
 		expect(kind).toBe('loader_failed');
 	});
 
-	it('case insensitive matching for cpu exceeded', async () => {
-		const { classifyLoaderError } = await import('@/runtime/core');
+	it('case insensitive matching for cpu exceeded', () => {
 		const message = 'CPU LIMIT EXCEEDED';
 		const kind = classifyLoaderError(message);
 		expect(kind).toBe('cpu_exceeded');
