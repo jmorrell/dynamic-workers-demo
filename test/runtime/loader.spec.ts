@@ -162,7 +162,7 @@ describe("runInLoader", () => {
 	});
 
 	describe("AC5.2: Network-blocked fetch", () => {
-		it("blocks fetch and returns error", async () => {
+		it("blocks fetch and returns network_blocked error", async () => {
 			const code = `export default async (input) => {
         try {
           const response = await fetch("https://example.com");
@@ -176,18 +176,14 @@ describe("runInLoader", () => {
 
 			expect(result.ok).toBe(false);
 			if (!result.ok) {
-				// Log the actual error message to see what globalOutbound: null produces
-				console.log("Fetch blocked error kind:", result.error.kind);
-				console.log("Fetch blocked error message:", result.error.message);
-				// Check if it's either network_blocked or transform_threw
-				expect(
-					result.error.kind === "network_blocked" ||
-						result.error.kind === "transform_threw"
-				).toBe(true);
+				// Must be network_blocked, not transform_threw
+				expect(result.error.kind).toBe("network_blocked");
+				// Capture the actual blocked-fetch message for classifyTransformError verification
+				console.log("Network blocked error message:", result.error.message);
 			}
 		});
 
-		it("network_blocked error classification is correct", async () => {
+		it("network_blocked error classification matches classifyTransformError", async () => {
 			const code = `export default async (input) => {
         try {
           await fetch("https://example.com");
@@ -201,15 +197,18 @@ describe("runInLoader", () => {
 			expect(result.ok).toBe(false);
 			if (!result.ok) {
 				// Verify classifier parity: this should be network_blocked
-				// If it's not, the inlined classifier in HARNESS_SOURCE has drifted
+				// If it's not, the inlined classifier in HARNESS_SOURCE has drifted from core.ts
 				expect(result.error.kind).toBe("network_blocked");
-				expect(result.error.message).toContain("not permitted");
+
+				// Verify core.ts would classify this message the same way
+				const coreClassification = classifyTransformError(result.error.message);
+				expect(coreClassification).toBe("network_blocked");
 			}
 		});
 	});
 
 	describe("AC5.3: Isolation - no host secrets/bindings visible", () => {
-		it("cannot access globalThis from host", async () => {
+		it("cannot access globalThis host properties", async () => {
 			const code = `export default (input) => {
         return typeof globalThis.someHostValue;
       }`;
@@ -218,39 +217,60 @@ describe("runInLoader", () => {
 
 			expect(result.ok).toBe(true);
 			if (result.ok) {
-				// Should be undefined or throw, proving globalThis.someHostValue doesn't exist
+				// Must be "undefined", proving host property doesn't leak
 				expect(result.value).toBe("undefined");
 			}
 		});
 
-		it("cannot access env bindings that are not in passed env", async () => {
-			const code = `export default (input) => {
-        // Try to access a binding that should NOT be passed
-        return typeof this.env.NONEXISTENT_BINDING;
-      }`;
-
-			const result = await runInLoader(env, testInput, code);
-
-			// Should either work (returning "undefined") or throw (transform_threw)
-			// but not crash the host
-			expect(result.ok === true || result.error.kind === "transform_threw").toBe(true);
-		});
-
-		it("only INPUT is accessible in env", async () => {
+		it("cannot access env bindings not passed to loaded worker", async () => {
 			const code = `export default function(input) {
-        // In harness, env is passed as this.env via WorkerEntrypoint
-        // The only thing in env should be INPUT
-        if (typeof input === 'object' && input !== null && 'url' in input) {
-          return 'input_accessible';
-        }
-        return 'input_not_accessible';
+        // Only INPUT should be in env, passed as the function parameter
+        // Try to inspect what bindings are available by checking Object.keys
+        return Object.keys(input || {});
       }`;
 
 			const result = await runInLoader(env, testInput, code);
 
 			expect(result.ok).toBe(true);
 			if (result.ok) {
-				expect(result.value).toBe("input_accessible");
+				// Result should be the keys in INPUT: url, finalUrl, status, contentType, body, truncated
+				const keys = result.value as Array<string>;
+				expect(keys).toContain("url");
+				expect(keys).toContain("finalUrl");
+				expect(keys).toContain("status");
+				expect(keys).toContain("contentType");
+				expect(keys).toContain("body");
+				expect(keys).toContain("truncated");
+				// Should NOT have any host bindings
+				expect(keys).not.toContain("LOADER");
+				expect(keys).not.toContain("NONEXISTENT_BINDING");
+			}
+		});
+
+		it("only INPUT properties are accessible via input parameter", async () => {
+			const code = `export default function(input) {
+        // Use input directly (not this.env) to verify isolation
+        // input should be the RunInput, nothing else
+        const keys = Object.keys(input || {});
+        const hasAllRequired = (
+          'url' in input &&
+          'finalUrl' in input &&
+          'status' in input &&
+          'contentType' in input &&
+          'body' in input &&
+          'truncated' in input
+        );
+        return { hasAllRequired, keyCount: keys.length };
+      }`;
+
+			const result = await runInLoader(env, testInput, code);
+
+			expect(result.ok).toBe(true);
+			if (result.ok) {
+				const value = result.value as { hasAllRequired: boolean; keyCount: number };
+				expect(value.hasAllRequired).toBe(true);
+				// Should be exactly 6 keys (url, finalUrl, status, contentType, body, truncated)
+				expect(value.keyCount).toBe(6);
 			}
 		});
 	});
