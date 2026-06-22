@@ -1,8 +1,11 @@
 // pattern: Imperative Shell
 
-import { hashCode } from './core';
+import { classifyLoaderError, hashCode } from './core';
 import type { RunInput, RunResult } from './types';
 import { HARNESS_SOURCE } from './harness-source';
+
+/** CPU limit for sandboxed worker code execution (in milliseconds) */
+export const CPU_LIMIT_MS = 50;
 
 // The Dynamic Worker's compatibility date comes from the LOADER_COMPAT_DATE
 // var (wrangler.jsonc), which mirrors the host's compat date so loaded code
@@ -40,6 +43,10 @@ export async function runInLoader(env: Env, input: RunInput, code: string): Prom
 				INPUT: input,
 			},
 			globalOutbound: null, // Block all outbound fetch
+			limits: {
+				cpuMs: CPU_LIMIT_MS,
+				subRequests: 5,
+			},
 		}));
 
 		// 3. Invoke the harness via RPC
@@ -48,12 +55,13 @@ export async function runInLoader(env: Env, input: RunInput, code: string): Prom
 		const result = await entrypoint.run();
 		return result;
 	} catch (err) {
-		// Loader-level failure (RPC, initialization, etc.)
+		// Loader-level failure (RPC, initialization, CPU/resource limits, etc.)
 		const message = err instanceof Error ? err.message : String(err);
+		const kind = classifyLoaderError(message);
 		return {
 			ok: false,
 			error: {
-				kind: 'loader_failed',
+				kind,
 				message,
 			},
 		};

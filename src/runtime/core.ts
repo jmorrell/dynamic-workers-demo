@@ -111,3 +111,27 @@ export function classifyTransformError(message: string): RunErrorKind {
 
 	return 'transform_threw';
 }
+
+/**
+ * Classifies a loader-level error message to determine the error kind.
+ * Maps CPU/resource limit exceeded messages to "cpu_exceeded", others to "loader_failed".
+ *
+ * Pure function for classifying loader-level exceptions. Adjusted substrings
+ * are finalized against the real thrown message in later tasks.
+ */
+export function classifyLoaderError(message: string): RunErrorKind {
+	const lower = message.toLowerCase();
+
+	// Match CPU limit and resource exhaustion signatures
+	if (
+		lower.includes('cpu') ||
+		lower.includes('limit') ||
+		lower.includes('exceeded') ||
+		lower.includes('timeout') ||
+		lower.includes('resource')
+	) {
+		return 'cpu_exceeded';
+	}
+
+	return 'loader_failed';
+}

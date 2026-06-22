@@ -114,3 +114,41 @@ describe('classifyTransformError', () => {
 		expect(kind).toBe('network_blocked');
 	});
 });
+
+describe('classifyLoaderError', () => {
+	it('returns cpu_exceeded for cpu limit message', async () => {
+		// Import inside test to avoid circular imports
+		const { classifyLoaderError } = await import('@/runtime/core');
+		const message = 'error: exceeded cpu limit of 50ms';
+		const kind = classifyLoaderError(message);
+		expect(kind).toBe('cpu_exceeded');
+	});
+
+	it('returns cpu_exceeded for limit exceeded message', async () => {
+		const { classifyLoaderError } = await import('@/runtime/core');
+		const message = 'Worker exceeded limit';
+		const kind = classifyLoaderError(message);
+		expect(kind).toBe('cpu_exceeded');
+	});
+
+	it('returns loader_failed for unrelated error message', async () => {
+		const { classifyLoaderError } = await import('@/runtime/core');
+		const message = 'something went wrong in the loader';
+		const kind = classifyLoaderError(message);
+		expect(kind).toBe('loader_failed');
+	});
+
+	it('returns loader_failed for empty message', async () => {
+		const { classifyLoaderError } = await import('@/runtime/core');
+		const message = '';
+		const kind = classifyLoaderError(message);
+		expect(kind).toBe('loader_failed');
+	});
+
+	it('case insensitive matching for cpu exceeded', async () => {
+		const { classifyLoaderError } = await import('@/runtime/core');
+		const message = 'CPU LIMIT EXCEEDED';
+		const kind = classifyLoaderError(message);
+		expect(kind).toBe('cpu_exceeded');
+	});
+});
