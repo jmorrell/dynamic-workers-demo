@@ -4,12 +4,12 @@ import { hashCode } from './core';
 import type { RunInput, RunResult } from './types';
 import { HARNESS_SOURCE } from './harness-source';
 
-// The Dynamic Worker's compatibility date must match the host's compat date
-// (wrangler.jsonc) so loaded code runs against the same runtime APIs and the
-// globalOutbound: null block error text stays consistent. The local
-// vitest/wrangler runtime supports an older max date and automatically falls
-// back with a harmless warning; production uses this exact date.
-const COMPAT_DATE = '2026-06-22';
+// The Dynamic Worker's compatibility date comes from the LOADER_COMPAT_DATE
+// var (wrangler.jsonc), which mirrors the host's compat date so loaded code
+// runs against the same runtime APIs and the globalOutbound: null block error
+// text stays consistent. Production uses 2026-06-22; the vitest config
+// overrides the var to a date the local workerd binary can load (it hard-errors
+// on future dates for loaded workers, unlike the host which falls back).
 
 /**
  * Runs untrusted code against a URL in a sandboxed dynamic worker.
@@ -33,7 +33,7 @@ export async function runInLoader(
 
     // 2. Get or create the worker via the loader
     const worker = await env.LOADER.get(id, async () => ({
-      compatibilityDate: COMPAT_DATE,
+      compatibilityDate: env.LOADER_COMPAT_DATE,
       compatibilityFlags: ['nodejs_compat'],
       mainModule: 'harness.js',
       modules: {

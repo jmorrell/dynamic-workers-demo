@@ -16,7 +16,14 @@
 	],
 	"worker_loaders": [
 		{ "binding": "LOADER" }
-	]
+	],
+	// Compat date applied to Dynamic Workers loaded via LOADER. Mirrors the
+	// host `compatibility_date` above so loaded code runs against the same
+	// runtime. The local test runtime can't load workers past its supported
+	// date, so the vitest config overrides this var to a supported date.
+	"vars": {
+		"LOADER_COMPAT_DATE": "2026-06-22"
+	}
 	/**
 	 * Smart Placement
 	 * https://developers.cloudflare.com/workers/configuration/smart-placement/#smart-placement
