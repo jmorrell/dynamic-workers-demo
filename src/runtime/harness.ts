@@ -12,10 +12,11 @@ import { classifyTransformError } from './core';
 // eslint-disable-next-line @typescript-eslint/no-unused-vars
 import userModule from './user.js';
 
-export default class Harness extends WorkerEntrypoint<{ INPUT: RunInput }> {
-	async run(): Promise<RunResult> {
-		const input = this.env.INPUT;
-
+export default class Harness extends WorkerEntrypoint {
+	// `input` is passed per invocation (an RPC argument), NOT read from env. The
+	// loader caches the compiled worker by code hash, so baking INPUT into env
+	// would make a second run of identical code reuse the first run's stale input.
+	async run(input: RunInput): Promise<RunResult> {
 		const transform = (userModule as { default?: unknown })?.default ?? userModule;
 		if (typeof transform !== 'function') {
 			return {

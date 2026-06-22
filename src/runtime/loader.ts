@@ -39,9 +39,10 @@ export async function runInLoader(env: Env, input: RunInput, code: string): Prom
 				'harness.js': HARNESS_SOURCE,
 				'user.js': code,
 			},
-			env: {
-				INPUT: input,
-			},
+			// No per-request data here: the worker is cached by code hash and
+			// reused across inputs, so INPUT is passed to run() per invocation.
+			// Keeping env empty also guarantees no host bindings/secrets leak in.
+			env: {},
 			globalOutbound: null, // Block all outbound fetch
 			limits: {
 				cpuMs: CPU_LIMIT_MS,
@@ -49,10 +50,10 @@ export async function runInLoader(env: Env, input: RunInput, code: string): Prom
 			},
 		}));
 
-		// 3. Invoke the harness via RPC
+		// 3. Invoke the harness via RPC, passing INPUT per call (see note above).
 		// @ts-expect-error worker entrypoint has run() method dynamically
-		const entrypoint = worker.getEntrypoint() as { run(): Promise<RunResult> };
-		const result = await entrypoint.run();
+		const entrypoint = worker.getEntrypoint() as { run(input: RunInput): Promise<RunResult> };
+		const result = await entrypoint.run(input);
 		return result;
 	} catch (err) {
 		// Loader-level failure (RPC, initialization, CPU/resource limits, etc.)

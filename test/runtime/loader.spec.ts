@@ -358,6 +358,20 @@ describe('runInLoader', () => {
 				expect(value.hasTruncated).toBe(true);
 			}
 		});
+
+		it('reflects fresh input when the same code is run with different inputs', async () => {
+			// Regression: the loader caches the compiled worker by code hash. INPUT must
+			// be delivered per invocation (not baked into the cached worker env), or a
+			// second run of identical code returns the first run's stale input/result.
+			const code = 'export default (input) => input.url';
+			const first = await runInLoader(env, { ...testInput, url: 'https://first.example' }, code);
+			const second = await runInLoader(env, { ...testInput, url: 'https://second.example' }, code);
+
+			expect(first.ok).toBe(true);
+			expect(second.ok).toBe(true);
+			if (first.ok) expect(first.value).toBe('https://first.example');
+			if (second.ok) expect(second.value).toBe('https://second.example');
+		});
 	});
 
 	describe('Edge cases', () => {

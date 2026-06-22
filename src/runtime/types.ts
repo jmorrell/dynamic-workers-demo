@@ -1,4 +1,4 @@
-/** Pre-fetched page snapshot handed to untrusted code via env.INPUT. */
+/** Pre-fetched page snapshot handed to untrusted code as the run() argument. */
 export type RunInput = {
 	url: string;
 	finalUrl: string;

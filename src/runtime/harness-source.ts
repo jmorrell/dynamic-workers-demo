@@ -29,9 +29,10 @@ function classifyTransformError(message) {
 }
 
 export default class Harness extends WorkerEntrypoint {
-  async run() {
-    const input = (this.env).INPUT;
-
+  // input is passed per invocation (RPC arg), NOT read from env — the loader
+  // caches the compiled worker by code hash, so baking INPUT into env would
+  // make a second run of identical code reuse the first run's stale input.
+  async run(input) {
     const transform = (userModule?.default) ?? userModule;
     if (typeof transform !== 'function') {
       return {
