@@ -1,25 +1,18 @@
 // pattern: Imperative Shell
 
-import { formatRunResponse, exampleOptions, type RunResponse } from './lib/render';
+import { formatRunResponse, exampleOptions, type RunResponse, type Example } from './lib/render';
 import { CodeJar } from 'codejar';
 import Prism from 'prismjs';
 import 'prismjs/components/prism-javascript';
 
-type Example = {
-	readonly id: string;
-	readonly title: string;
-	readonly description: string;
-	readonly suggestedUrls: ReadonlyArray<string>;
-	readonly source: string;
-	readonly code: string;
-};
-
-interface State {
+// Module-singleton UI state; fields are mutated in place by the event handlers
+// below (intentional for this thin imperative shell).
+type State = {
 	examples: Array<Example>;
 	selectedExampleId: string | null;
 	isCustomCode: boolean;
 	isRunning: boolean;
-}
+};
 
 const state: State = {
 	examples: [],

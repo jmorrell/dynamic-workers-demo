@@ -4,11 +4,45 @@
 	<meta charset="UTF-8" />
 	<meta name="viewport" content="width=device-width, initial-scale=1.0" />
 	<title>Dynamic Workers Demo</title>
-	<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.8.0/styles/atom-one-light.min.css" />
-	<link rel="stylesheet" href="/app.css" />
 	<style>
 		* {
 			box-sizing: border-box;
+		}
+
+		/* Prism token colors for the CodeJar editor (highlighting is emitted as
+		   <span class="token ..."> by Prism in frontend/main.ts). */
+		.token.comment,
+		.token.prolog,
+		.token.doctype,
+		.token.cdata {
+			color: #6a737d;
+		}
+		.token.punctuation {
+			color: #24292e;
+		}
+		.token.keyword,
+		.token.boolean,
+		.token.atrule {
+			color: #d73a49;
+		}
+		.token.string,
+		.token.char,
+		.token.attr-value {
+			color: #032f62;
+		}
+		.token.function,
+		.token.class-name {
+			color: #6f42c1;
+		}
+		.token.number,
+		.token.constant,
+		.token.symbol {
+			color: #005cc5;
+		}
+		.token.operator,
+		.token.entity,
+		.token.url {
+			color: #d73a49;
 		}
 
 		body {

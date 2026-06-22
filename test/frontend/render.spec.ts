@@ -77,7 +77,7 @@ describe('render helpers', () => {
 
 		it('handles non-serializable values with fallback', () => {
 			const result = formatResultValue(undefined);
-			expect(result).toBeTruthy();
+			expect(result).toBe('undefined');
 		});
 	});
 

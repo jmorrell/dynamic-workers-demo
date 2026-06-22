@@ -1,6 +1,6 @@
 // pattern: Functional Core
 
-type Example = {
+export type Example = {
 	readonly id: string;
 	readonly title: string;
 	readonly description: string;
