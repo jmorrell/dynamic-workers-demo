@@ -1,3 +1,5 @@
+// NOTE: Example payload (untrusted code). Not application code — executed via the loader.
+
 import type { RunInput } from '../runtime/types';
 
 export default function transform(_input: RunInput): unknown {

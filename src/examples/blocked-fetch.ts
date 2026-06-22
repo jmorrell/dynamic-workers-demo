@@ -1,3 +1,5 @@
+// NOTE: Example payload (untrusted code). Not application code — executed via the loader. Not classified as Functional Core (fetch is the whole point of the demo).
+
 import type { RunInput } from '../runtime/types';
 
 export default async function transform(input: RunInput): Promise<unknown> {
