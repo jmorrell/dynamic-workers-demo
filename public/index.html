@@ -1,0 +1,243 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+	<meta charset="UTF-8" />
+	<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+	<title>Dynamic Workers Demo</title>
+	<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.8.0/styles/atom-one-light.min.css" />
+	<link rel="stylesheet" href="/app.css" />
+	<style>
+		* {
+			box-sizing: border-box;
+		}
+
+		body {
+			font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+			font-size: 14px;
+			line-height: 1.5;
+			color: #333;
+			margin: 0;
+			padding: 16px;
+			background: #f5f5f5;
+		}
+
+		h1 {
+			margin-top: 0;
+			margin-bottom: 16px;
+			font-size: 20px;
+		}
+
+		section {
+			margin-bottom: 16px;
+		}
+
+		label {
+			display: block;
+			margin-bottom: 4px;
+			font-weight: 600;
+			color: #222;
+		}
+
+		select,
+		input[type='text'],
+		textarea,
+		.editor {
+			width: 100%;
+			padding: 8px;
+			font-family: 'Monaco', 'Menlo', 'Consolas', monospace;
+			font-size: 13px;
+			border: 1px solid #ccc;
+			border-radius: 4px;
+			background: white;
+		}
+
+		input[type='text'] {
+			padding: 10px;
+			font-family: inherit;
+		}
+
+		.chips {
+			display: flex;
+			flex-wrap: wrap;
+			gap: 8px;
+			margin-top: 8px;
+			margin-bottom: 8px;
+		}
+
+		.chip {
+			padding: 6px 12px;
+			background: #e0e0e0;
+			border: 1px solid #999;
+			border-radius: 16px;
+			cursor: pointer;
+			font-size: 12px;
+			white-space: nowrap;
+			transition: background-color 0.2s;
+		}
+
+		.chip:hover {
+			background: #d0d0d0;
+		}
+
+		.chip:active {
+			background: #c0c0c0;
+		}
+
+		.toggle-group {
+			display: flex;
+			align-items: center;
+			gap: 8px;
+			margin-top: 8px;
+			margin-bottom: 8px;
+		}
+
+		input[type='checkbox'] {
+			cursor: pointer;
+		}
+
+		button {
+			padding: 10px 16px;
+			background: #0066cc;
+			color: white;
+			border: none;
+			border-radius: 4px;
+			cursor: pointer;
+			font-size: 14px;
+			font-weight: 600;
+			transition: background-color 0.2s;
+		}
+
+		button:hover:not(:disabled) {
+			background: #0052a3;
+		}
+
+		button:disabled {
+			background: #ccc;
+			cursor: not-allowed;
+		}
+
+		#editor {
+			min-height: 200px;
+			overflow-y: auto;
+			border: 1px solid #ccc;
+			border-radius: 4px;
+			padding: 8px;
+			background: white;
+		}
+
+		#editor.editable {
+			color: #333;
+			outline: none;
+		}
+
+		#results {
+			background: white;
+			border: 1px solid #ccc;
+			border-radius: 4px;
+			padding: 12px;
+			margin-top: 16px;
+		}
+
+		#results.empty {
+			display: none;
+		}
+
+		#results h3 {
+			margin: 0 0 8px 0;
+			font-size: 14px;
+			color: #0066cc;
+		}
+
+		#results.error h3 {
+			color: #c00;
+		}
+
+		#results.ok h3 {
+			color: #060;
+		}
+
+		pre {
+			background: #f0f0f0;
+			border: 1px solid #ddd;
+			border-radius: 4px;
+			padding: 8px;
+			overflow-x: auto;
+			white-space: pre-wrap;
+			word-wrap: break-word;
+			margin: 8px 0;
+			font-size: 12px;
+		}
+
+		.timing {
+			color: #666;
+			font-size: 12px;
+			margin-top: 8px;
+		}
+
+		.logs-truncated {
+			background: #fffacd;
+			border: 1px solid #daa;
+			border-radius: 4px;
+			padding: 8px;
+			margin-top: 8px;
+			color: #666;
+			font-size: 12px;
+		}
+
+		.error-text {
+			color: #c00;
+			font-weight: 600;
+		}
+
+		.success-text {
+			color: #060;
+			font-weight: 600;
+		}
+	</style>
+</head>
+<body>
+	<h1>Dynamic Workers Demo</h1>
+
+	<section>
+		<label for="example">Choose an Example:</label>
+		<select id="example">
+			<option value="">-- Select an example --</option>
+		</select>
+	</section>
+
+	<section id="suggested-urls-section" style="display: none">
+		<label>Suggested URLs:</label>
+		<div class="chips" id="suggested-urls"></div>
+	</section>
+
+	<section>
+		<label for="url">Target URL:</label>
+		<input type="text" id="url" placeholder="https://example.com" />
+	</section>
+
+	<section>
+		<div class="toggle-group">
+			<input type="checkbox" id="custom-code-toggle" />
+			<label for="custom-code-toggle" style="margin-bottom: 0">Custom Code</label>
+		</div>
+	</section>
+
+	<section>
+		<label for="editor">Code:</label>
+		<div id="editor">// Select an example or enable custom code to start</div>
+	</section>
+
+	<section>
+		<button id="run-button" disabled>Run</button>
+	</section>
+
+	<section id="results" class="empty">
+		<h3 id="results-title"></h3>
+		<div id="results-body"></div>
+		<div id="logs-container"></div>
+		<div id="timing-info"></div>
+	</section>
+
+	<script src="/app.js"></script>
+</body>
+</html>

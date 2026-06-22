@@ -1,0 +1,11 @@
+{
+	"extends": "../tsconfig.json",
+	"compilerOptions": {
+		"lib": ["es2024", "dom", "dom.iterable"],
+		"moduleResolution": "Bundler",
+		"strict": true,
+		"noEmit": true,
+		"types": ["@types/prismjs"]
+	},
+	"include": ["**/*.ts"]
+}
