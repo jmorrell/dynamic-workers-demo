@@ -4,6 +4,13 @@ import { hashCode } from './core';
 import type { RunInput, RunResult } from './types';
 import { HARNESS_SOURCE } from './harness-source';
 
+// Compatibility date must match the host's compat date to ensure Dynamic Worker
+// has access to the same APIs as the host. The host's production compat date is 2026-06-22 (wrangler.jsonc).
+// However, local test runtime supports up to ~2026-03-10 and will fallback with a warning.
+// For tests to run locally, we use the maximum date the test runtime supports.
+// TODO: In production deployment, update this to match wrangler.jsonc (2026-06-22).
+const COMPAT_DATE = '2026-03-10';
+
 /**
  * Runs untrusted code against a URL in a sandboxed dynamic worker.
  *
@@ -26,7 +33,7 @@ export async function runInLoader(
 
     // 2. Get or create the worker via the loader
     const worker = await env.LOADER.get(id, async () => ({
-      compatibilityDate: '2026-03-17',
+      compatibilityDate: COMPAT_DATE,
       compatibilityFlags: ['nodejs_compat'],
       mainModule: 'harness.js',
       modules: {
