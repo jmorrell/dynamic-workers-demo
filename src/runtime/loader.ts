@@ -25,30 +25,39 @@ export const CPU_LIMIT_MS = 50;
  *
  * The harness handles transform-level failures and always returns structured result.
  */
-export async function runInLoader(env: Env, input: RunInput, code: string): Promise<RunResult> {
+export async function runInLoader(env: Env, input: RunInput, code: string, runId?: string, ctx?: ExecutionContext): Promise<RunResult> {
 	try {
 		// 1. Hash the code for cache key (identical code → same isolate)
 		const id = await hashCode(code);
 
 		// 2. Get or create the worker via the loader
-		const worker = await env.LOADER.get(id, async () => ({
-			compatibilityDate: env.LOADER_COMPAT_DATE,
-			compatibilityFlags: ['nodejs_compat'],
-			mainModule: 'harness.js',
-			modules: {
-				'harness.js': HARNESS_SOURCE,
-				'user.js': code,
-			},
-			// No per-request data here: the worker is cached by code hash and
-			// reused across inputs, so INPUT is passed to run() per invocation.
-			// Keeping env empty also guarantees no host bindings/secrets leak in.
-			env: {},
-			globalOutbound: null, // Block all outbound fetch
-			limits: {
-				cpuMs: CPU_LIMIT_MS,
-				subRequests: 5,
-			},
-		}));
+		const worker = await env.LOADER.get(id, async () => {
+			const workerCode: any = {
+				compatibilityDate: env.LOADER_COMPAT_DATE,
+				compatibilityFlags: ['nodejs_compat'],
+				mainModule: 'harness.js',
+				modules: {
+					'harness.js': HARNESS_SOURCE,
+					'user.js': code,
+				},
+				// No per-request data here: the worker is cached by code hash and
+				// reused across inputs, so INPUT is passed to run() per invocation.
+				// Keeping env empty also guarantees no host bindings/secrets leak in.
+				env: {},
+				globalOutbound: null, // Block all outbound fetch
+				limits: {
+					cpuMs: CPU_LIMIT_MS,
+					subRequests: 5,
+				},
+			};
+
+			// Attach tail worker if runId and ctx are provided
+			if (runId && ctx) {
+				workerCode.tails = [ctx.exports.LogTailer({ props: { runId } })];
+			}
+
+			return workerCode;
+		});
 
 		// 3. Invoke the harness via RPC, passing INPUT per call (see note above).
 		// @ts-expect-error worker entrypoint has run() method dynamically

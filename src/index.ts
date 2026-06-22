@@ -6,6 +6,10 @@ import type { RunResult } from './runtime/types';
 import { listExamples, getExample } from './examples/manifest';
 import { LogSession } from './runtime/log-session';
 import { LogTailer } from './runtime/log-tailer';
+import { LOG_MAX_LINES, LOG_MAX_BYTES } from './runtime/log-types';
+
+/** Timeout (ms) for reading logs from LogSession after run completes */
+const LOG_READ_TIMEOUT_MS = 500;
 
 async function handleExamples(request: Request): Promise<Response> {
 	// Only GET allowed
@@ -17,7 +21,7 @@ async function handleExamples(request: Request): Promise<Response> {
 	return new Response(JSON.stringify(examples), { status: 200, headers: { 'content-type': 'application/json' } });
 }
 
-async function handleRun(request: Request, env: Env): Promise<Response> {
+async function handleRun(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
 	// Validate method
 	if (request.method !== 'POST') {
 		return new Response('Method not allowed', { status: 405 });
@@ -118,22 +122,32 @@ async function handleRun(request: Request, env: Env): Promise<Response> {
 			JSON.stringify({
 				ok: false,
 				error: fetchOutcome.error,
+				logs: [],
+				logsTruncated: false,
 				timingMs: 0,
 			}),
 			{ status: 200, headers: { 'content-type': 'application/json' } },
 		);
 	}
 
+	// Generate unique run ID for this execution
+	const runId = crypto.randomUUID();
+
 	// Run code in loader
 	const startTime = performance.now();
-	const result = await runInLoader(env, fetchOutcome.input, code);
+	const result = await runInLoader(env, fetchOutcome.input, code, runId, ctx);
 	const timingMs = Math.round(performance.now() - startTime);
+
+	// Read logs from LogSession
+	const logs = await env.LOG_SESSION.get(env.LOG_SESSION.idFromName(runId)).getLogs(LOG_READ_TIMEOUT_MS);
 
 	return new Response(
 		JSON.stringify({
 			ok: result.ok,
 			result: result.ok ? result.value : null,
 			error: !result.ok ? result.error : null,
+			logs: logs.lines,
+			logsTruncated: logs.truncated,
 			timingMs,
 		}),
 		{ status: 200, headers: { 'content-type': 'application/json' } },
@@ -144,7 +158,7 @@ export { LogSession } from './runtime/log-session';
 export { LogTailer } from './runtime/log-tailer';
 
 export default {
-	async fetch(request: Request, env: Env): Promise<Response> {
+	async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
 		const url = new URL(request.url);
 
 		// Route GET /api/examples
@@ -154,7 +168,7 @@ export default {
 
 		// Route POST /api/run
 		if (url.pathname === '/api/run') {
-			return handleRun(request, env);
+			return handleRun(request, env, ctx);
 		}
 
 		// Unknown path
