@@ -1,7 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { env } from 'cloudflare:test';
 import { LogTailer } from '@/runtime/log-tailer';
-import type { LogLine } from '@/runtime/log-types';
 
 describe('LogTailer tail() mapping', () => {
 	it('maps logs with message as array of args', async () => {
