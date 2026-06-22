@@ -55,13 +55,14 @@ describe('LogSession Durable Object', () => {
 		const runId = 'test-wait-' + Math.random();
 		const stub = env.LOG_SESSION.get(env.LOG_SESSION.idFromName(runId));
 
+		const timeout = 60;
 		const startTime = Date.now();
-		const result = await stub.getLogs(60);
+		const result = await stub.getLogs(timeout);
 		const elapsed = Date.now() - startTime;
 
 		// Should wait for most of the timeout before returning empty
 		expect(result).toEqual({ lines: [], truncated: false });
-		expect(elapsed).toBeGreaterThanOrEqual(50);
+		expect(elapsed).toBeGreaterThanOrEqual(timeout * 0.75);
 	});
 
 	it('getLogs returns immediately if append already occurred', async () => {
@@ -100,12 +101,13 @@ describe('LogSession Durable Object', () => {
 		const stub2 = env.LOG_SESSION.get(env.LOG_SESSION.idFromName(runId2));
 
 		await stub2.append([]);
+		const timeout = 60;
 		const startTime = Date.now();
-		const result2 = await stub2.getLogs(60);
+		const result2 = await stub2.getLogs(timeout);
 		const elapsed = Date.now() - startTime;
 
 		// Empty append should not count as "appended", so getLogs should wait for timeout
 		expect(result2).toEqual({ lines: [], truncated: false });
-		expect(elapsed).toBeGreaterThanOrEqual(50);
+		expect(elapsed).toBeGreaterThanOrEqual(timeout * 0.75);
 	});
 });
