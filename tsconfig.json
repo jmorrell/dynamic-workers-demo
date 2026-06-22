@@ -39,7 +39,11 @@
 		"types": [
 			"./worker-configuration.d.ts",
 			"node"
-		]
+		],
+		/* Path aliases */
+		"paths": {
+			"@/*": ["./src/*"]
+		}
 	},
 	"exclude": ["test"],
 	"include": ["worker-configuration.d.ts", "src/**/*.ts"]
