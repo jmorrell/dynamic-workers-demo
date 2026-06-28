@@ -1,7 +1,3 @@
-/**
- * For more details on how to configure Wrangler, refer to:
- * https://developers.cloudflare.com/workers/wrangler/configuration/
- */
 {
 	"$schema": "node_modules/wrangler/config-schema.json",
 	"name": "dynamic-workers-demo",
@@ -13,51 +9,18 @@
 	"upload_source_maps": true,
 	"compatibility_flags": ["nodejs_compat"],
 	"worker_loaders": [{ "binding": "LOADER" }],
-	// Compat date applied to Dynamic Workers loaded via LOADER. Mirrors the
-	// host `compatibility_date` above so loaded code runs against the same
-	// runtime. The local test runtime can't load workers past its supported
-	// date, so the vitest config overrides this var to a supported date.
 	"vars": {
 		"LOADER_COMPAT_DATE": "2026-06-22",
 		"TURNSTILE_SITEKEY": "1x00000000000000000000AA",
 	},
-	"ratelimits": [
-		{ "name": "RATE_LIMITER", "namespace_id": "1001", "simple": { "limit": 10, "period": 60 } },
-	],
+	"ratelimits": [{ "name": "RATE_LIMITER", "namespace_id": "1001", "simple": { "limit": 10, "period": 60 } }],
 	"durable_objects": {
 		"bindings": [{ "name": "LOG_SESSION", "class_name": "LogSession" }],
 	},
 	"migrations": [{ "tag": "v1", "new_sqlite_classes": ["LogSession"] }],
-	/**
-	 * Smart Placement
-	 * https://developers.cloudflare.com/workers/configuration/smart-placement/#smart-placement
-	 */
-	// "placement": {  "mode": "smart" }
-	/**
-	 * Bindings
-	 * Bindings allow your Worker to interact with resources on the Cloudflare Developer Platform, including
-	 * databases, object storage, AI inference, real-time communication and more.
-	 * https://developers.cloudflare.com/workers/runtime-apis/bindings/
-	 */
-	/**
-	 * Environment Variables
-	 * https://developers.cloudflare.com/workers/wrangler/configuration/#environment-variables
-	 * Note: Use secrets to store sensitive data.
-	 * https://developers.cloudflare.com/workers/configuration/secrets/
-	 */
-	// "vars": {  "MY_VARIABLE": "production_value" }
-	/**
-	 * Static Assets
-	 * https://developers.cloudflare.com/workers/static-assets/binding/
-	 */
 	"assets": {
 		"directory": "./public",
 		"binding": "ASSETS",
-		"run_worker_first": ["/api/*"]
+		"run_worker_first": ["/api/*"],
 	},
-	/**
-	 * Service Bindings (communicate between multiple Workers)
-	 * https://developers.cloudflare.com/workers/wrangler/configuration/#service-bindings
-	 */
-	// "services": [  {   "binding": "MY_SERVICE",   "service": "my-service"  } ]
 }
