@@ -37,6 +37,12 @@ export async function fetchTarget(
 	try {
 		const response = await fetch(url, {
 			signal: controller.signal,
+			// Identify the fetcher honestly. Many sites reject blank or known-library
+			// User-Agents with a 403; an honest descriptive UA satisfies those without
+			// impersonating a browser. (Won't bypass datacenter-IP blocks like Reddit's.)
+			headers: {
+				'User-Agent': 'DynamicWorkersDemo/1.0 (+https://github.com/; transform sandbox)',
+			},
 		});
 
 		clearTimeout(timeoutId);

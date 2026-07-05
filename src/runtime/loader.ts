@@ -31,7 +31,7 @@ export async function runInLoader(env: Env, input: RunInput, code: string, runId
 		const id = await hashCode(code);
 
 		// 2. Get or create the worker via the loader
-		const worker = await env.LOADER.get(id, async () => {
+		const worker = env.LOADER.get(id, async () => {
 			const workerCode: WorkerLoaderWorkerCode = {
 				compatibilityDate: env.LOADER_COMPAT_DATE,
 				compatibilityFlags: ['nodejs_compat'],

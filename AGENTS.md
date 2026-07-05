@@ -48,6 +48,10 @@ deploy-verified only:
 - Tail events are NOT delivered locally — `LogTailer` → `LogSession` log capture
   is exercised by other means in tests, not via real tail.
 - `RATE_LIMITER` is a no-op stub locally (always succeeds).
+- Turnstile gate (GATE 2 in `src/index.ts`) is bypassed when `ENVIRONMENT=development`
+  (set in `.dev.vars`, so only during `wrangler dev`). Deploy uses `ENVIRONMENT=production`
+  from wrangler.jsonc vars and enforces the gate. vitest pins `ENVIRONMENT=test` so gate
+  tests stay valid.
 - `LOADER_COMPAT_DATE` (prod `2026-06-22`) is overridden to a loadable date in
   `vitest.config.mts` because local workerd hard-errors loading future-dated
   Dynamic Workers.

@@ -1,5 +1,3 @@
-// pattern: Imperative Shell
-
 import { fetchTarget } from './runtime/fetch-target';
 import { runInLoader } from './runtime/loader';
 import type { RunErrorKind } from './runtime/types';
@@ -87,14 +85,19 @@ async function handleRun(request: Request, env: Env, ctx: ExecutionContext): Pro
 		return jsonError(429, 'rate_limited', 'Too many runs, please wait and try again.');
 	}
 
-	// GATE 2: Verify Turnstile token
-	const turnstileVerifyResult = await turnstileVerifier(
-		typeof turnstileToken === 'string' ? turnstileToken : undefined,
-		env.TURNSTILE_SECRET,
-		clientIp,
-	);
-	if (!turnstileVerifyResult.ok) {
-		return jsonError(403, 'turnstile_failed', 'Verification failed.');
+	// GATE 2: Verify Turnstile token.
+	// Bypassed in local dev (ENVIRONMENT=development via .dev.vars) so the run
+	// endpoint works without the browser widget loading. Always enforced on
+	// deploy, where ENVIRONMENT is "production" (wrangler.jsonc vars).
+	if (env.ENVIRONMENT !== 'development') {
+		const turnstileVerifyResult = await turnstileVerifier(
+			typeof turnstileToken === 'string' ? turnstileToken : undefined,
+			env.TURNSTILE_SECRET,
+			clientIp,
+		);
+		if (!turnstileVerifyResult.ok) {
+			return jsonError(403, 'turnstile_failed', 'Verification failed.');
+		}
 	}
 
 	// Validate url

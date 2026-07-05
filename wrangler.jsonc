@@ -12,6 +12,9 @@
 	"vars": {
 		"LOADER_COMPAT_DATE": "2026-06-22",
 		"TURNSTILE_SITEKEY": "1x00000000000000000000AA",
+		// "production" on deploy; overridden to "development" via .dev.vars during
+		// `wrangler dev` to bypass the Turnstile gate locally. See src/index.ts.
+		"ENVIRONMENT": "production",
 	},
 	"ratelimits": [{ "name": "RATE_LIMITER", "namespace_id": "1001", "simple": { "limit": 10, "period": 60 } }],
 	"durable_objects": {

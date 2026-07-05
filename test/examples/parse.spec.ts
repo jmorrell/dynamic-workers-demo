@@ -1,7 +1,23 @@
 import { describe, it, expect } from 'vitest';
-import { parseOpenGraph, parseRedditTopComments, parseHnTopComments } from '../../src/examples/lib/parse';
+import type { RunInput } from '../../src/runtime/types';
+import opengraph from '../../src/examples/opengraph';
+import reddit from '../../src/examples/reddit';
+import hackernews from '../../src/examples/hackernews';
 
-describe('parseOpenGraph', () => {
+// The parsing logic lives inline inside each example's transform(). These tests
+// drive the examples through their default export, feeding `body` via RunInput.
+function runInput(body: string): RunInput {
+	return {
+		url: 'https://example.com',
+		finalUrl: 'https://example.com',
+		status: 200,
+		contentType: 'text/html',
+		body,
+		truncated: false,
+	};
+}
+
+describe('opengraph example', () => {
 	it('extracts og: properties from HTML', () => {
 		const html = `
 			<html>
@@ -12,7 +28,7 @@ describe('parseOpenGraph', () => {
 			</head>
 			</html>
 		`;
-		const result = parseOpenGraph(html);
+		const result = opengraph(runInput(html)) as Record<string, string>;
 		expect(result['og:title']).toBe('My Article');
 		expect(result['og:description']).toBe('A great article');
 		expect(result['og:image']).toBe('https://example.com/image.jpg');
@@ -20,14 +36,11 @@ describe('parseOpenGraph', () => {
 
 	it('returns empty object when no og tags found', () => {
 		const html = '<html><head><title>No OG tags</title></head></html>';
-		const result = parseOpenGraph(html);
-		expect(result).toEqual({});
+		expect(opengraph(runInput(html))).toEqual({});
 	});
 
 	it('handles malformed HTML gracefully', () => {
-		const html = 'not valid html at all';
-		const result = parseOpenGraph(html);
-		expect(result).toEqual({});
+		expect(opengraph(runInput('not valid html at all'))).toEqual({});
 	});
 
 	it('extracts twitter: tags', () => {
@@ -39,46 +52,30 @@ describe('parseOpenGraph', () => {
 			</head>
 			</html>
 		`;
-		const result = parseOpenGraph(html);
+		const result = opengraph(runInput(html)) as Record<string, string>;
 		expect(result['twitter:card']).toBe('summary');
 		expect(result['twitter:title']).toBe('Tweet Title');
 	});
 });
 
-describe('parseRedditTopComments', () => {
+describe('reddit example', () => {
+	type RedditComment = { author: string; score: number; body: string };
+
 	it('extracts top comments sorted by score', () => {
 		const json = JSON.stringify([
 			{ data: { children: [] } },
 			{
 				data: {
 					children: [
-						{
-							data: {
-								author: 'user1',
-								score: 10,
-								body: 'First comment',
-							},
-						},
-						{
-							data: {
-								author: 'user2',
-								score: 25,
-								body: 'Second comment',
-							},
-						},
-						{
-							data: {
-								author: 'user3',
-								score: 5,
-								body: 'Third comment',
-							},
-						},
+						{ data: { author: 'user1', score: 10, body: 'First comment' } },
+						{ data: { author: 'user2', score: 25, body: 'Second comment' } },
+						{ data: { author: 'user3', score: 5, body: 'Third comment' } },
 					],
 				},
 			},
 		]);
 
-		const result = parseRedditTopComments(json);
+		const result = reddit(runInput(json)) as RedditComment[];
 		expect(result).toHaveLength(3);
 		expect(result[0].author).toBe('user2');
 		expect(result[0].score).toBe(25);
@@ -89,52 +86,27 @@ describe('parseRedditTopComments', () => {
 		expect(result[2].score).toBe(5);
 	});
 
-	it('respects limit parameter', () => {
-		const json = JSON.stringify([
-			{ data: { children: [] } },
-			{
-				data: {
-					children: [
-						{ data: { author: 'user1', score: 100, body: 'comment1' } },
-						{ data: { author: 'user2', score: 90, body: 'comment2' } },
-						{ data: { author: 'user3', score: 80, body: 'comment3' } },
-						{ data: { author: 'user4', score: 70, body: 'comment4' } },
-						{ data: { author: 'user5', score: 60, body: 'comment5' } },
-					],
-				},
-			},
-		]);
+	it('caps results at the default limit of 10', () => {
+		const children = Array.from({ length: 12 }, (_, i) => ({
+			data: { author: `user${i}`, score: 100 - i, body: `comment${i}` },
+		}));
+		const json = JSON.stringify([{ data: { children: [] } }, { data: { children } }]);
 
-		const result = parseRedditTopComments(json, 2);
-		expect(result).toHaveLength(2);
-		expect(result[0].author).toBe('user1');
-		expect(result[1].author).toBe('user2');
+		const result = reddit(runInput(json)) as RedditComment[];
+		expect(result).toHaveLength(10);
+		expect(result[0].author).toBe('user0'); // highest score
 	});
 
 	it('returns empty array on invalid JSON', () => {
-		const result = parseRedditTopComments('not json');
-		expect(result).toEqual([]);
+		expect(reddit(runInput('not json'))).toEqual([]);
 	});
 
 	it('returns empty array when body is missing', () => {
 		const json = JSON.stringify([
 			{ data: { children: [] } },
-			{
-				data: {
-					children: [
-						{
-							data: {
-								author: 'user1',
-								score: 10,
-							},
-						},
-					],
-				},
-			},
+			{ data: { children: [{ data: { author: 'user1', score: 10 } }] } },
 		]);
-
-		const result = parseRedditTopComments(json);
-		expect(result).toEqual([]);
+		expect(reddit(runInput(json))).toEqual([]);
 	});
 
 	it('skips entries without required fields', () => {
@@ -151,43 +123,33 @@ describe('parseRedditTopComments', () => {
 			},
 		]);
 
-		const result = parseRedditTopComments(json);
+		const result = reddit(runInput(json)) as RedditComment[];
 		expect(result).toHaveLength(2);
 		expect(result[0].author).toBe('user1');
 		expect(result[1].author).toBe('user3');
 	});
 });
 
-describe('parseHnTopComments', () => {
+describe('hackernews example', () => {
+	type HnComment = { author: string; points: number | null; text: string };
+
 	it('extracts top comments from Algolia item recursively', () => {
 		const json = JSON.stringify({
 			children: [
-				{
-					text: 'Great article!',
-					author: 'alice',
-					points: 42,
-				},
+				{ text: 'Great article!', author: 'alice', points: 42 },
 				{
 					text: 'I disagree',
 					author: 'bob',
 					points: 23,
 					children: [
-						{
-							text: 'Why?',
-							author: 'charlie',
-							points: 15,
-						},
-						{
-							text: 'Interesting point',
-							author: 'diana',
-							points: 8,
-						},
+						{ text: 'Why?', author: 'charlie', points: 15 },
+						{ text: 'Interesting point', author: 'diana', points: 8 },
 					],
 				},
 			],
 		});
 
-		const result = parseHnTopComments(json);
+		const result = hackernews(runInput(json)) as HnComment[];
 		expect(result).toHaveLength(4);
 		expect(result[0].author).toBe('alice');
 		expect(result[0].points).toBe(42);
@@ -195,22 +157,20 @@ describe('parseHnTopComments', () => {
 		expect(result[1].points).toBe(23);
 	});
 
-	it('respects limit parameter', () => {
-		const json = JSON.stringify({
-			children: [
-				{ text: 'comment1', author: 'user1', points: 100 },
-				{ text: 'comment2', author: 'user2', points: 90 },
-				{ text: 'comment3', author: 'user3', points: 80 },
-			],
-		});
+	it('caps results at the default limit of 10', () => {
+		const children = Array.from({ length: 12 }, (_, i) => ({
+			text: `comment${i}`,
+			author: `user${i}`,
+			points: 100 - i,
+		}));
+		const json = JSON.stringify({ children });
 
-		const result = parseHnTopComments(json, 2);
-		expect(result).toHaveLength(2);
+		const result = hackernews(runInput(json)) as HnComment[];
+		expect(result).toHaveLength(10);
 	});
 
 	it('returns empty array on invalid JSON', () => {
-		const result = parseHnTopComments('invalid json');
-		expect(result).toEqual([]);
+		expect(hackernews(runInput('invalid json'))).toEqual([]);
 	});
 
 	it('handles null points gracefully', () => {
@@ -222,7 +182,7 @@ describe('parseHnTopComments', () => {
 			],
 		});
 
-		const result = parseHnTopComments(json);
+		const result = hackernews(runInput(json)) as HnComment[];
 		expect(result).toHaveLength(3);
 		expect(result[0].points).toBe(100);
 		expect(result[1].points).toBe(50);
@@ -238,7 +198,7 @@ describe('parseHnTopComments', () => {
 			],
 		});
 
-		const result = parseHnTopComments(json);
+		const result = hackernews(runInput(json)) as HnComment[];
 		expect(result).toHaveLength(2);
 		expect(result[0].author).toBe('user1');
 		expect(result[1].author).toBe('user3');

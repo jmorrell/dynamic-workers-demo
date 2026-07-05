@@ -1,5 +1,3 @@
-// pattern: Imperative Shell
-
 export type VerifyResult = { ok: boolean; errorCodes: Array<string> };
 
 export async function verifyTurnstile(
