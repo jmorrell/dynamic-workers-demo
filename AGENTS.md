@@ -25,9 +25,11 @@ contracts.
 An example (`ExampleMeta` in `src/examples/registry.ts`) may declare
 `modules: [{ name, kind: 'wasm', file }]` — non-JS modules its entry imports by
 relative specifier (e.g. `import mod from './add.wasm'`). `file` is a
-repo-relative path to a committed binary (e.g. `src/examples/add.wasm`, the
-41-byte `wasm-add` example's module); the build reads + base64-encodes it into
-the manifest entry. `scripts/build-examples.mjs` bundles such an example with
+repo-relative path to a binary (e.g. `src/examples/add.wasm`, the 41-byte
+`wasm-add` example's module) — either committed under `src/examples/` or
+package-shipped under `node_modules/` (version pinned by the lockfile, e.g.
+`image-hash`'s `@cf-wasm/photon` binary); the build reads + base64-encodes it
+into the manifest entry. `scripts/build-examples.mjs` bundles such an example with
 esbuild `external: ['*.wasm']` so the relative import survives verbatim into
 `code` (esbuild never tries to load the binary itself — the loader injects the
 real module at Dynamic Worker load time). The frontend editor renders one tab

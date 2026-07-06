@@ -15,8 +15,10 @@ export type ExampleMeta = {
 	readonly permissions?: Permissions;
 	// Non-JS modules the loader must inject alongside the bundled code (e.g. a
 	// wasm binary the entry imports via a relative specifier). `file` is a
-	// repo-relative path to the committed binary, read + base64-encoded at build
-	// time (scripts/build-examples.mjs) into the manifest entry.
+	// repo-relative path to the binary, read + base64-encoded at build time
+	// (scripts/build-examples.mjs) into the manifest entry. May be a committed
+	// binary under src/examples/, or a package-shipped one under node_modules/
+	// (version pinned by the lockfile, e.g. @cf-wasm/photon's wasm binary).
 	readonly modules?: ReadonlyArray<{ readonly name: string; readonly kind: 'wasm'; readonly file: string }>;
 };
 
@@ -29,6 +31,7 @@ export const SHARED_DEP_SPECIFIERS: ReadonlyArray<{ readonly specifier: string; 
 	{ specifier: 'linkedom', entry: 'linkedom' },
 	{ specifier: 'defuddle/node', entry: 'defuddle/node' },
 	{ specifier: 'markdown-dom-polyfill', entry: 'src/examples/markdown-dom-polyfill.ts' },
+	{ specifier: '@cf-wasm/photon/others', entry: '@cf-wasm/photon/others' },
 ];
 
 export const EXAMPLE_REGISTRY: ReadonlyArray<ExampleMeta> = [
@@ -80,5 +83,15 @@ export const EXAMPLE_REGISTRY: ReadonlyArray<ExampleMeta> = [
 		entry: 'src/examples/wasm-add.ts',
 		compatDate: '2026-06-22',
 		modules: [{ name: 'add.wasm', kind: 'wasm', file: 'src/examples/add.wasm' }],
+	},
+	{
+		id: 'image-hash',
+		title: 'Image Perceptual Hash (wasm)',
+		description: 'Decodes images referenced by the page with the photon wasm library and computes a 64-bit perceptual difference-hash for each.',
+		suggestedUrls: ['https://en.wikipedia.org/wiki/Cloudflare', 'https://commons.wikimedia.org/wiki/Main_Page'],
+		entry: 'src/examples/image-hash.ts',
+		compatDate: '2026-06-22',
+		permissions: { fetch: 'page-links', cpuMs: 2000 },
+		modules: [{ name: 'photon.wasm', kind: 'wasm', file: 'node_modules/@cf-wasm/photon/dist/lib/photon_rs_bg.wasm' }],
 	},
 ];

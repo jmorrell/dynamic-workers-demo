@@ -34,7 +34,7 @@ describe('GET /api/examples handler', () => {
 
 		const data = await response.json<Array<{ id: string; title: string; description: string }>>();
 		expect(Array.isArray(data)).toBe(true);
-		expect(data.length).toBe(6);
+		expect(data.length).toBe(7);
 
 		// Should not contain code field
 		for (const example of data) {
@@ -609,6 +609,108 @@ export default async (env, input) => {
 			await waitOnExecutionContext(ctx);
 
 			expect(response.status).toBe(400);
+		});
+	});
+
+	describe('image-hash example (photon wasm + fetchFile capability)', () => {
+		// A real, valid 1x1 PNG (the classic minimal test PNG).
+		const PNG_1X1_BASE64 =
+			'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==';
+
+		afterEach(() => {
+			vi.unstubAllGlobals();
+		});
+
+		function stubPageAndImage(): void {
+			const page = 'http://example.com/page';
+			const imageUrl = 'http://example.com/photo.png';
+			vi.stubGlobal(
+				'fetch',
+				vi.fn((input: RequestInfo | URL) => {
+					const u = typeof input === 'string' ? input : input.toString();
+					if (u === imageUrl) {
+						const bytes = Uint8Array.from(atob(PNG_1X1_BASE64), (c) => c.charCodeAt(0));
+						return Promise.resolve(new Response(bytes, { status: 200, headers: { 'content-type': 'image/png' } }));
+					}
+					return Promise.resolve(
+						new Response(`<html><body><img src="${imageUrl}"><img src="/relative.png"></body></html>`, {
+							status: 200,
+							headers: { 'content-type': 'text/html' },
+						}),
+					);
+				}),
+			);
+		}
+
+		it('POST /api/run { type: "example", exampleId: "image-hash" } fetches images and computes a dhash', async () => {
+			stubPageAndImage();
+
+			const request = new IncomingRequest('http://example.com/api/run', {
+				method: 'POST',
+				headers: { 'CF-Connecting-IP': '203.0.113.240' },
+				body: JSON.stringify({
+					worker: { type: 'example', exampleId: 'image-hash' },
+					url: 'http://example.com/page',
+				}),
+			});
+			const ctx = createExecutionContext();
+			const response = await worker.fetch(request, env, ctx);
+			await waitOnExecutionContext(ctx);
+
+			expect(response.status).toBe(200);
+			const data = await response.json<{
+				ok: boolean;
+				result?: { images: Array<{ url: string; width?: number; height?: number; dhash?: string; error?: string }> };
+				error?: { kind: string; message: string };
+			}>();
+			expect(data.ok).toBe(true);
+			expect(data.result?.images.length).toBeGreaterThan(0);
+			const decoded = data.result?.images.find((i) => i.url === 'http://example.com/photo.png');
+			expect(decoded).toBeDefined();
+			expect(decoded?.width).toBe(1);
+			expect(decoded?.height).toBe(1);
+			expect(decoded?.dhash).toMatch(/^[0-9a-f]{16}$/);
+		});
+
+		it('runs the image-hash example source verbatim as edited custom code (sucrase + injected dep + request-supplied wasm)', async () => {
+			stubPageAndImage();
+
+			const example = getExample('image-hash');
+			expect(example).toBeDefined();
+			if (!example) return;
+			const photonModule = example.modules?.find((m) => m.name === 'photon.wasm');
+			expect(photonModule).toBeDefined();
+			if (!photonModule) return;
+
+			const request = new IncomingRequest('http://example.com/api/run', {
+				method: 'POST',
+				headers: { 'CF-Connecting-IP': '203.0.113.241' },
+				body: JSON.stringify({
+					worker: {
+						type: 'custom',
+						customCode: example.source,
+						modules: [{ name: 'photon.wasm', kind: 'wasm', base64: photonModule.base64 }],
+					},
+					url: 'http://example.com/page',
+					permissions: { fetch: 'page-links', cpuMs: 2000 },
+				}),
+			});
+			const ctx = createExecutionContext();
+			const response = await worker.fetch(request, env, ctx);
+			await waitOnExecutionContext(ctx);
+
+			expect(response.status).toBe(200);
+			const data = await response.json<{
+				ok: boolean;
+				result?: { images: Array<{ url: string; width?: number; height?: number; dhash?: string; error?: string }> };
+				error?: { kind: string; message: string };
+			}>();
+			expect(data.ok).toBe(true);
+			const decoded = data.result?.images.find((i) => i.url === 'http://example.com/photo.png');
+			expect(decoded).toBeDefined();
+			expect(decoded?.width).toBe(1);
+			expect(decoded?.height).toBe(1);
+			expect(decoded?.dhash).toMatch(/^[0-9a-f]{16}$/);
 		});
 	});
 
