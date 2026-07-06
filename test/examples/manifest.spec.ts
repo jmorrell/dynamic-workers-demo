@@ -3,15 +3,14 @@ import { EXAMPLES, listExamples, getExample } from '../../src/examples/manifest'
 
 describe('manifest', () => {
 	describe('EXAMPLES', () => {
-		it('contains all six examples', () => {
-			expect(EXAMPLES).toHaveLength(6);
+		it('contains all five examples', () => {
+			expect(EXAMPLES).toHaveLength(5);
 		});
 
 		it('has required ids', () => {
 			const ids = EXAMPLES.map((e) => e.id);
 			expect(ids).toContain('markdown');
 			expect(ids).toContain('opengraph');
-			expect(ids).toContain('reddit');
 			expect(ids).toContain('hackernews');
 			expect(ids).toContain('cpu-spin');
 			expect(ids).toContain('blocked-fetch');
@@ -36,7 +35,7 @@ describe('manifest', () => {
 	describe('listExamples()', () => {
 		it('returns all examples without code field', () => {
 			const examples = listExamples();
-			expect(examples).toHaveLength(6);
+			expect(examples).toHaveLength(5);
 
 			for (const example of examples) {
 				expect('code' in example).toBe(false);

@@ -34,7 +34,7 @@ describe('GET /api/examples handler', () => {
 
 		const data = await response.json<Array<{ id: string; title: string; description: string }>>();
 		expect(Array.isArray(data)).toBe(true);
-		expect(data.length).toBe(6);
+		expect(data.length).toBe(5);
 
 		// Should not contain code field
 		for (const example of data) {

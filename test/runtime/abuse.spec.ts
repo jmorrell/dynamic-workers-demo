@@ -21,7 +21,7 @@ describe('Abuse controls on /api/run', () => {
 				const request = new IncomingRequest('http://example.com/api/run', {
 					method: 'POST',
 					body: JSON.stringify({
-						worker: { type: 'example', exampleId: 'reddit' },
+						worker: { type: 'example', exampleId: 'hackernews' },
 						url: 'https://example.com',
 						// missing turnstileToken
 					}),
@@ -52,7 +52,7 @@ describe('Abuse controls on /api/run', () => {
 				const request = new IncomingRequest('http://example.com/api/run', {
 					method: 'POST',
 					body: JSON.stringify({
-						worker: { type: 'example', exampleId: 'reddit' },
+						worker: { type: 'example', exampleId: 'hackernews' },
 						url: 'https://example.com',
 						turnstileToken: 'invalid-token',
 					}),
@@ -83,7 +83,7 @@ describe('Abuse controls on /api/run', () => {
 				const request = new IncomingRequest('http://example.com/api/run', {
 					method: 'POST',
 					body: JSON.stringify({
-						worker: { type: 'example', exampleId: 'reddit' },
+						worker: { type: 'example', exampleId: 'hackernews' },
 						url: 'https://example.com',
 						turnstileToken: '1x00000000000000000000AA',
 					}),

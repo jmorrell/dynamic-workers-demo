@@ -1,7 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import type { RunInput } from '../../src/runtime/types';
 import opengraph from '../../src/examples/opengraph';
-import reddit from '../../src/examples/reddit';
 import hackernews from '../../src/examples/hackernews';
 
 // The parsing logic lives inline inside each example's transform(). These tests
@@ -17,7 +16,6 @@ function runInput(body: string, url = 'https://example.com'): RunInput {
 	};
 }
 
-const REDDIT_URL = 'https://www.reddit.com/r/webdev/comments/abc123/some_thread/.json';
 const HN_URL = 'https://hn.algolia.com/api/v1/items/39284928';
 
 describe('opengraph example', () => {
@@ -58,84 +56,6 @@ describe('opengraph example', () => {
 		const result = opengraph({}, runInput(html)) as Record<string, string>;
 		expect(result['twitter:card']).toBe('summary');
 		expect(result['twitter:title']).toBe('Tweet Title');
-	});
-});
-
-describe('reddit example', () => {
-	type RedditComment = { author: string; score: number; body: string };
-
-	it('extracts top comments sorted by score', () => {
-		const json = JSON.stringify([
-			{ data: { children: [] } },
-			{
-				data: {
-					children: [
-						{ data: { author: 'user1', score: 10, body: 'First comment' } },
-						{ data: { author: 'user2', score: 25, body: 'Second comment' } },
-						{ data: { author: 'user3', score: 5, body: 'Third comment' } },
-					],
-				},
-			},
-		]);
-
-		const result = reddit({}, runInput(json, REDDIT_URL)) as RedditComment[];
-		expect(result).toHaveLength(3);
-		expect(result[0].author).toBe('user2');
-		expect(result[0].score).toBe(25);
-		expect(result[0].body).toBe('Second comment');
-		expect(result[1].author).toBe('user1');
-		expect(result[1].score).toBe(10);
-		expect(result[2].author).toBe('user3');
-		expect(result[2].score).toBe(5);
-	});
-
-	it('caps results at the default limit of 10', () => {
-		const children = Array.from({ length: 12 }, (_, i) => ({
-			data: { author: `user${i}`, score: 100 - i, body: `comment${i}` },
-		}));
-		const json = JSON.stringify([{ data: { children: [] } }, { data: { children } }]);
-
-		const result = reddit({}, runInput(json, REDDIT_URL)) as RedditComment[];
-		expect(result).toHaveLength(10);
-		expect(result[0].author).toBe('user0'); // highest score
-	});
-
-	it('throws when the URL is not a Reddit host', () => {
-		expect(() => reddit({}, runInput('not json', 'https://example.com/foo'))).toThrow(/only works with Reddit URLs/);
-	});
-
-	it('throws with a corrected .json URL when the body is HTML, not JSON', () => {
-		const url = 'https://www.reddit.com/r/steammachine/comments/1ump4mz/steam_machine_gamecube_size_comparison/';
-		expect(() => reddit({}, runInput('<!doctype html><html></html>', url))).toThrow(
-			'https://www.reddit.com/r/steammachine/comments/1ump4mz/steam_machine_gamecube_size_comparison.json',
-		);
-	});
-
-	it('throws on a Reddit JSON response with the wrong shape (e.g. a listing)', () => {
-		const listingJson = JSON.stringify({ kind: 'Listing', data: { children: [] } });
-		expect(() => reddit({}, runInput(listingJson, 'https://www.reddit.com/r/javascript/hot/.json'))).toThrow(
-			/Expected a Reddit thread \.json URL/,
-		);
-	});
-
-	it('skips entries without required fields', () => {
-		const json = JSON.stringify([
-			{ data: { children: [] } },
-			{
-				data: {
-					children: [
-						{ data: { author: 'user1', score: 10, body: 'comment1' } },
-						{ data: { score: 9 } }, // missing author and body
-						{ data: { author: 'user3', score: 8, body: 'comment3' } },
-					],
-				},
-			},
-		]);
-
-		const result = reddit({}, runInput(json, REDDIT_URL)) as RedditComment[];
-		expect(result).toHaveLength(2);
-		expect(result[0].author).toBe('user1');
-		expect(result[1].author).toBe('user3');
 	});
 });
 

@@ -44,14 +44,6 @@ export const EXAMPLE_REGISTRY: ReadonlyArray<ExampleMeta> = [
 		compatDate: '2026-06-22',
 	},
 	{
-		id: 'reddit',
-		title: 'Reddit Top Comments',
-		description: 'Extracts the top-scoring comments from a Reddit thread.',
-		suggestedUrls: ['https://www.reddit.com/r/steammachine/comments/1ump4mz/steam_machine_gamecube_size_comparison/.json'],
-		entry: 'src/examples/reddit.ts',
-		compatDate: '2026-06-22',
-	},
-	{
 		id: 'hackernews',
 		title: 'Hacker News Top Comments',
 		description: 'Extracts the top-scoring comments from a Hacker News thread using the Algolia API.',

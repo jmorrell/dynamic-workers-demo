@@ -113,65 +113,6 @@ const FIXTURES = {
 </body>
 </html>`,
 
-	redditJson: `[
-	{
-		"data": {
-			"children": []
-		}
-	},
-	{
-		"data": {
-			"children": [
-				{
-					"kind": "t1",
-					"data": {
-						"author": "alice",
-						"score": 1250,
-						"body": "This is the top comment about web performance. It provides useful insights about optimization techniques.",
-						"created_utc": 1234567890
-					}
-				},
-				{
-					"kind": "t1",
-					"data": {
-						"author": "bob",
-						"score": 890,
-						"body": "Great article! I found the section on Core Web Vitals particularly helpful. Implementing these changes improved our site speed by 40%.",
-						"created_utc": 1234567891
-					}
-				},
-				{
-					"kind": "t1",
-					"data": {
-						"author": "charlie",
-						"score": 650,
-						"body": "Has anyone else tried using a CDN? The difference in load times was night and day for our international users.",
-						"created_utc": 1234567892
-					}
-				},
-				{
-					"kind": "t1",
-					"data": {
-						"author": "diana",
-						"score": 420,
-						"body": "The Lighthouse recommendations have been invaluable for our development process.",
-						"created_utc": 1234567893
-					}
-				},
-				{
-					"kind": "t1",
-					"data": {
-						"author": "eve",
-						"score": 180,
-						"body": "Is anyone using WebPageTest? I'd like to hear about your experience.",
-						"created_utc": 1234567894
-					}
-				}
-			]
-		}
-	}
-]`,
-
 	hnAlgoliaJson: `{
 	"id": 39284928,
 	"created_at": "2024-01-15T10:30:00Z",
@@ -328,44 +269,6 @@ describe('Example transforms through loader (AC2.1–AC2.5)', () => {
 		});
 	});
 
-	describe('AC2.3: reddit example', () => {
-		it('returns sorted top comments from Reddit JSON', async () => {
-			const example = getExample('reddit');
-			expect(example).toBeDefined();
-			if (!example) return;
-
-			const input: RunInput = {
-				url: 'https://www.reddit.com/r/webdev/comments/abc123.json',
-				finalUrl: 'https://www.reddit.com/r/webdev/comments/abc123.json',
-				status: 200,
-				contentType: 'application/json',
-				responseHeaders: new Map(),
-				body: FIXTURES.redditJson,
-				truncated: false,
-			};
-
-			const ctx = createExecutionContext();
-			const result = await runInLoader(env, input, example.code, crypto.randomUUID(), ctx);
-
-			expect(result.type).toBe('success');
-			if (result.type === 'success') {
-				const output = result.value as Array<Record<string, unknown>>;
-				expect(Array.isArray(output)).toBe(true);
-				expect(output.length).toBeGreaterThan(0);
-				// Should be sorted by score descending
-				expect(output[0].author).toBe('alice');
-				expect(output[0].score).toBe(1250);
-				expect(output[0].body).toContain('top comment');
-				expect(output[1].author).toBe('bob');
-				expect(output[1].score).toBe(890);
-				// Verify sorting is descending
-				for (let i = 0; i < output.length - 1; i++) {
-					expect((output[i].score as number) >= (output[i + 1].score as number)).toBe(true);
-				}
-			}
-		});
-	});
-
 	describe('AC2.4: hackernews example', () => {
 		it('returns sorted comments from HN Algolia item', async () => {
 			const example = getExample('hackernews');
@@ -455,59 +358,6 @@ describe('Example transforms through loader (AC2.1–AC2.5)', () => {
 			if (result.type === 'success') {
 				const output = result.value as Record<string, unknown>;
 				expect(Object.keys(output).length).toBe(0);
-			}
-		});
-
-		it('reddit throws (transform_threw) for a non-Reddit URL', async () => {
-			const example = getExample('reddit');
-			expect(example).toBeDefined();
-			if (!example) return;
-
-			const input: RunInput = {
-				url: 'https://example.com/not-reddit',
-				finalUrl: 'https://example.com/not-reddit',
-				status: 200,
-				contentType: 'text/html',
-				responseHeaders: new Map(),
-				body: '<html></html>',
-				truncated: false,
-			};
-
-			const ctx = createExecutionContext();
-			const result = await runInLoader(env, input, example.code, crypto.randomUUID(), ctx);
-
-			expect(result.type).toBe('failure');
-			if (result.type === 'failure') {
-				expect(result.error.kind).toBe('transform_threw');
-				expect(result.error.message).toContain('only works with Reddit URLs');
-			}
-		});
-
-		it('reddit throws with a corrected .json URL when given a Reddit HTML thread page', async () => {
-			const example = getExample('reddit');
-			expect(example).toBeDefined();
-			if (!example) return;
-
-			const url = 'https://www.reddit.com/r/steammachine/comments/1ump4mz/steam_machine_gamecube_size_comparison/';
-			const input: RunInput = {
-				url,
-				finalUrl: url,
-				status: 200,
-				contentType: 'text/html',
-				responseHeaders: new Map(),
-				body: '<!doctype html><html><body>Reddit thread page</body></html>',
-				truncated: false,
-			};
-
-			const ctx = createExecutionContext();
-			const result = await runInLoader(env, input, example.code, crypto.randomUUID(), ctx);
-
-			expect(result.type).toBe('failure');
-			if (result.type === 'failure') {
-				expect(result.error.kind).toBe('transform_threw');
-				expect(result.error.message).toContain(
-					'https://www.reddit.com/r/steammachine/comments/1ump4mz/steam_machine_gamecube_size_comparison.json',
-				);
 			}
 		});
 
