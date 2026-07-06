@@ -21,7 +21,7 @@ describe('Abuse controls on /api/run', () => {
 				const request = new IncomingRequest('http://example.com/api/run', {
 					method: 'POST',
 					body: JSON.stringify({
-						exampleId: 'reddit',
+						worker: { type: 'example', exampleId: 'reddit' },
 						url: 'https://example.com',
 						// missing turnstileToken
 					}),
@@ -52,7 +52,7 @@ describe('Abuse controls on /api/run', () => {
 				const request = new IncomingRequest('http://example.com/api/run', {
 					method: 'POST',
 					body: JSON.stringify({
-						exampleId: 'reddit',
+						worker: { type: 'example', exampleId: 'reddit' },
 						url: 'https://example.com',
 						turnstileToken: 'invalid-token',
 					}),
@@ -83,7 +83,7 @@ describe('Abuse controls on /api/run', () => {
 				const request = new IncomingRequest('http://example.com/api/run', {
 					method: 'POST',
 					body: JSON.stringify({
-						exampleId: 'reddit',
+						worker: { type: 'example', exampleId: 'reddit' },
 						url: 'https://example.com',
 						turnstileToken: '1x00000000000000000000AA',
 					}),
@@ -121,7 +121,7 @@ describe('Abuse controls on /api/run', () => {
 				const request = new IncomingRequest('http://example.com/api/run', {
 					method: 'POST',
 					body: JSON.stringify({
-						customCode: 'export default (input) => input.status',
+						worker: { type: 'custom', customCode: 'export default (input) => input.status' },
 						url: 'https://example.com/test',
 						turnstileToken: '1x00000000000000000000AA',
 					}),
@@ -161,7 +161,7 @@ describe('Abuse controls on /api/run', () => {
 				const request = new IncomingRequest('http://example.com/api/run', {
 					method: 'POST',
 					body: JSON.stringify({
-						exampleId: 'markdown',
+						worker: { type: 'example', exampleId: 'markdown' },
 						url: 'https://example.com/test',
 						turnstileToken: '1x00000000000000000000AA',
 					}),

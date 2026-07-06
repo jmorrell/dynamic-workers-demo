@@ -31,6 +31,7 @@ describe('Log capture and forwarding (AC3)', () => {
 			finalUrl: 'https://example.com/test',
 			status: 200,
 			contentType: 'text/html',
+			responseHeaders: new Map(),
 			body: '<html>Test page</html>',
 			truncated: false,
 		};
@@ -49,8 +50,8 @@ describe('Log capture and forwarding (AC3)', () => {
 
 			// Transform should succeed
 			const result = await runInLoader(env, testInput, code, runId, ctx);
-			expect(result.ok).toBe(true);
-			if (result.ok) {
+			expect(result.type).toBe('success');
+			if (result.type === 'success') {
 				expect(result.value).toBe('result');
 			}
 
@@ -73,7 +74,7 @@ describe('Log capture and forwarding (AC3)', () => {
       `;
 
 			const result = await runInLoader(env, testInput, code, runId, ctx);
-			expect(result.ok).toBe(true);
+			expect(result.type).toBe('success');
 
 			const logsStub = env.LOG_SESSION.get(env.LOG_SESSION.idFromName(runId));
 			const logs = await logsStub.getLogs(500);
@@ -143,7 +144,7 @@ describe('Log capture and forwarding (AC3)', () => {
       `;
 
 			const result = await runInLoader(env, testInput, code, runId, ctx);
-			expect(result.ok).toBe(true);
+			expect(result.type).toBe('success');
 		});
 
 		it('LogSession.getLogs returns valid LogBundle structure', async () => {

@@ -4,12 +4,23 @@ export type RunInput = {
 	finalUrl: string;
 	status: number;
 	contentType: string;
+	responseHeaders: Map<string, string>;
 	body: string;
 	truncated: boolean;
 };
 
+export type UserWorker =
+	| { type: 'custom'; customCode: string }
+	| { type: 'example'; exampleId: string };
+
+export type RunRequestBody = {
+	url: string;
+	worker: UserWorker;
+	turnstileToken?: string;
+};
+
 /** Structured result returned by the harness over RPC. */
-export type RunResult = { ok: true; value: unknown } | { ok: false; error: RunError };
+export type RunResult = { type: 'success'; value: unknown } | { type: 'failure'; error: RunError };
 
 export type RunErrorKind =
 	| 'transform_threw'
@@ -19,17 +30,13 @@ export type RunErrorKind =
 	| 'no_transform'
 	| 'rate_limited'
 	| 'turnstile_failed'
-	| 'bad_request';
+	| 'bad_request'
+	| 'fetch_failed';
 
 export type RunError = {
 	kind: RunErrorKind;
 	message: string;
 };
 
-/**
- * Host fetch outcome before loader invocation. Note: `fetch_failed` is a
- * pre-loader kind specific to FetchOutcome and is intentionally NOT part of
- * RunErrorKind — but the /api/run response surfaces it in the same `error` slot,
- * so a consumer reading `error.kind` may also see `fetch_failed`.
- */
-export type FetchOutcome = { ok: true; input: RunInput } | { ok: false; error: { kind: 'fetch_failed'; message: string } };
+/** Host fetch outcome before loader invocation. */
+export type FetchOutcome = { type: 'success'; input: RunInput } | { type: 'failure'; error: RunError };

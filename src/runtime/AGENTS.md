@@ -15,12 +15,12 @@ the target URL, captures the sandbox's logs, and enforces abuse gates.
 - **run() contract**: the harness exposes `run(input: RunInput): Promise<RunResult>`.
   INPUT is passed PER INVOCATION as the RPC argument — NOT via `env`. The loaded
   worker's `env` is intentionally `{}` (no host bindings/secrets leak in).
-- **Guarantees**: `RunResult` is always structured (`{ok:true,value}` or
-  `{ok:false,error:{kind,message}}`); host never sees a thrown transform error.
-  Outbound `fetch` from sandbox is blocked (`globalOutbound: null`).
+- **Guarantees**: `RunResult` is always structured (`{type:'success',value}` or
+  `{type:'failure',error:{kind,message}}`); host never sees a thrown transform
+  error. Outbound `fetch` from sandbox is blocked (`globalOutbound: null`).
 - **Expects**: `code` is a self-contained ESM string with a default-export
   transform function. `RunInput` is a plain snapshot (url/finalUrl/status/
-  contentType/body/truncated).
+  contentType/responseHeaders/body/truncated).
 
 ## Key Decisions
 - **Loader caches by code hash** (`hashCode`, SHA-256): identical code reuses a

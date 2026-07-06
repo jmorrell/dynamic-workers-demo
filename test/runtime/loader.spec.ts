@@ -14,6 +14,7 @@ describe('runInLoader', () => {
 			finalUrl: 'https://example.com/test',
 			status: 200,
 			contentType: 'text/html',
+			responseHeaders: new Map(),
 			body: '<html>Test page</html>',
 			truncated: false,
 		};
@@ -26,8 +27,8 @@ describe('runInLoader', () => {
 
 			const result = await runInLoader(env, testInput, code, crypto.randomUUID(), ctx);
 
-			expect(result.ok).toBe(true);
-			if (result.ok) {
+			expect(result.type).toBe('success');
+			if (result.type === 'success') {
 				expect(result.value).toBe(200);
 			}
 		});
@@ -37,8 +38,8 @@ describe('runInLoader', () => {
 
 			const result = await runInLoader(env, testInput, code, crypto.randomUUID(), ctx);
 
-			expect(result.ok).toBe(true);
-			if (result.ok) {
+			expect(result.type).toBe('success');
+			if (result.type === 'success') {
 				expect(result.value).toBe(200);
 			}
 		});
@@ -52,8 +53,8 @@ describe('runInLoader', () => {
 
 			const result = await runInLoader(env, testInput, code, crypto.randomUUID(), ctx);
 
-			expect(result.ok).toBe(true);
-			if (result.ok) {
+			expect(result.type).toBe('success');
+			if (result.type === 'success') {
 				expect(result.value).toEqual({
 					url: 'https://example.com/test',
 					status: 200,
@@ -71,8 +72,8 @@ describe('runInLoader', () => {
 
 			const result = await runInLoader(env, testInput, code, crypto.randomUUID(), ctx);
 
-			expect(result.ok).toBe(true);
-			if (result.ok) {
+			expect(result.type).toBe('success');
+			if (result.type === 'success') {
 				expect(result.value).toEqual([200, 'text/html', false]);
 			}
 		});
@@ -82,8 +83,8 @@ describe('runInLoader', () => {
 
 			const result = await runInLoader(env, testInput, code, crypto.randomUUID(), ctx);
 
-			expect(result.ok).toBe(true);
-			if (result.ok) {
+			expect(result.type).toBe('success');
+			if (result.type === 'success') {
 				expect(result.value).toBe('Hello: text/html');
 			}
 		});
@@ -93,8 +94,8 @@ describe('runInLoader', () => {
 
 			const result = await runInLoader(env, testInput, code, crypto.randomUUID(), ctx);
 
-			expect(result.ok).toBe(true);
-			if (result.ok) {
+			expect(result.type).toBe('success');
+			if (result.type === 'success') {
 				expect(result.value).toBe(null);
 			}
 		});
@@ -104,8 +105,8 @@ describe('runInLoader', () => {
 
 			const result = await runInLoader(env, testInput, code, crypto.randomUUID(), ctx);
 
-			expect(result.ok).toBe(true);
-			if (result.ok) {
+			expect(result.type).toBe('success');
+			if (result.type === 'success') {
 				expect(result.value).toBe(false);
 			}
 		});
@@ -117,8 +118,8 @@ describe('runInLoader', () => {
 
 			const result = await runInLoader(env, testInput, code, crypto.randomUUID(), ctx);
 
-			expect(result.ok).toBe(false);
-			if (!result.ok) {
+			expect(result.type).toBe('failure');
+			if (result.type === 'failure') {
 				expect(result.error.kind).toBe('transform_threw');
 				expect(result.error.message).toContain('Custom error');
 			}
@@ -131,8 +132,8 @@ describe('runInLoader', () => {
 
 			const result = await runInLoader(env, testInput, code, crypto.randomUUID(), ctx);
 
-			expect(result.ok).toBe(false);
-			if (!result.ok) {
+			expect(result.type).toBe('failure');
+			if (result.type === 'failure') {
 				expect(result.error.kind).toBe('transform_threw');
 				expect(result.error.message).toContain('Async error');
 			}
@@ -144,8 +145,8 @@ describe('runInLoader', () => {
 			// This should not throw; it should return structured error
 			const result = await runInLoader(env, testInput, code, crypto.randomUUID(), ctx);
 
-			expect(result.ok).toBe(false);
-			if (!result.ok) {
+			expect(result.type).toBe('failure');
+			if (result.type === 'failure') {
 				expect(result.error.kind).toBe('transform_threw');
 			}
 		});
@@ -155,8 +156,8 @@ describe('runInLoader', () => {
 
 			const result = await runInLoader(env, testInput, code, crypto.randomUUID(), ctx);
 
-			expect(result.ok).toBe(false);
-			if (!result.ok) {
+			expect(result.type).toBe('failure');
+			if (result.type === 'failure') {
 				expect(result.error.message).toContain('string error');
 			}
 		});
@@ -175,8 +176,8 @@ describe('runInLoader', () => {
 
 			const result = await runInLoader(env, testInput, code, crypto.randomUUID(), ctx);
 
-			expect(result.ok).toBe(false);
-			if (!result.ok) {
+			expect(result.type).toBe('failure');
+			if (result.type === 'failure') {
 				// Must be network_blocked, not transform_threw
 				expect(result.error.kind).toBe('network_blocked');
 				// Capture the actual blocked-fetch message for classifyTransformError verification
@@ -195,8 +196,8 @@ describe('runInLoader', () => {
 
 			const result = await runInLoader(env, testInput, code, crypto.randomUUID(), ctx);
 
-			expect(result.ok).toBe(false);
-			if (!result.ok) {
+			expect(result.type).toBe('failure');
+			if (result.type === 'failure') {
 				// Verify classifier parity: this should be network_blocked
 				// If it's not, the inlined classifier in HARNESS_SOURCE has drifted from core.ts
 				expect(result.error.kind).toBe('network_blocked');
@@ -216,8 +217,8 @@ describe('runInLoader', () => {
 
 			const result = await runInLoader(env, testInput, code, crypto.randomUUID(), ctx);
 
-			expect(result.ok).toBe(true);
-			if (result.ok) {
+			expect(result.type).toBe('success');
+			if (result.type === 'success') {
 				// Must be "undefined", proving host property doesn't leak
 				expect(result.value).toBe('undefined');
 			}
@@ -232,14 +233,16 @@ describe('runInLoader', () => {
 
 			const result = await runInLoader(env, testInput, code, crypto.randomUUID(), ctx);
 
-			expect(result.ok).toBe(true);
-			if (result.ok) {
-				// Result should be the keys in INPUT: url, finalUrl, status, contentType, body, truncated
+			expect(result.type).toBe('success');
+			if (result.type === 'success') {
+				// Result should be the keys in INPUT: url, finalUrl, status, contentType,
+				// responseHeaders, body, truncated
 				const keys = result.value as Array<string>;
 				expect(keys).toContain('url');
 				expect(keys).toContain('finalUrl');
 				expect(keys).toContain('status');
 				expect(keys).toContain('contentType');
+				expect(keys).toContain('responseHeaders');
 				expect(keys).toContain('body');
 				expect(keys).toContain('truncated');
 				// Should NOT have any host bindings
@@ -258,6 +261,7 @@ describe('runInLoader', () => {
           'finalUrl' in input &&
           'status' in input &&
           'contentType' in input &&
+          'responseHeaders' in input &&
           'body' in input &&
           'truncated' in input
         );
@@ -266,12 +270,12 @@ describe('runInLoader', () => {
 
 			const result = await runInLoader(env, testInput, code, crypto.randomUUID(), ctx);
 
-			expect(result.ok).toBe(true);
-			if (result.ok) {
+			expect(result.type).toBe('success');
+			if (result.type === 'success') {
 				const value = result.value as { hasAllRequired: boolean; keyCount: number };
 				expect(value.hasAllRequired).toBe(true);
-				// Should be exactly 6 keys (url, finalUrl, status, contentType, body, truncated)
-				expect(value.keyCount).toBe(6);
+				// Should be exactly 7 keys (url, finalUrl, status, contentType, responseHeaders, body, truncated)
+				expect(value.keyCount).toBe(7);
 			}
 		});
 	});
@@ -284,8 +288,8 @@ describe('runInLoader', () => {
 
 			const result = await runInLoader(env, testInput, code, crypto.randomUUID(), ctx);
 
-			expect(result.ok).toBe(false);
-			if (!result.ok) {
+			expect(result.type).toBe('failure');
+			if (result.type === 'failure') {
 				// Core.ts unit test says this should be "transform_threw"
 				expect(result.error.kind).toBe('transform_threw');
 
@@ -306,8 +310,8 @@ describe('runInLoader', () => {
 
 			const result = await runInLoader(env, testInput, code, crypto.randomUUID(), ctx);
 
-			expect(result.ok).toBe(false);
-			if (!result.ok) {
+			expect(result.type).toBe('failure');
+			if (result.type === 'failure') {
 				// Should be network_blocked from inlined classifier
 				expect(result.error.kind).toBe('network_blocked');
 
@@ -329,8 +333,8 @@ describe('runInLoader', () => {
 
 			const result = await runInLoader(env, testInput, code, crypto.randomUUID(), ctx);
 
-			expect(result.ok).toBe(true);
-			if (result.ok) {
+			expect(result.type).toBe('success');
+			if (result.type === 'success') {
 				expect(result.value).toBe('module loaded successfully');
 			}
 		});
@@ -349,8 +353,8 @@ describe('runInLoader', () => {
 
 			const result = await runInLoader(env, testInput, code, crypto.randomUUID(), ctx);
 
-			expect(result.ok).toBe(true);
-			if (result.ok) {
+			expect(result.type).toBe('success');
+			if (result.type === 'success') {
 				const value = result.value as Record<string, boolean>;
 				expect(value.hasUrl).toBe(true);
 				expect(value.hasFinalUrl).toBe(true);
@@ -369,10 +373,10 @@ describe('runInLoader', () => {
 			const first = await runInLoader(env, { ...testInput, url: 'https://first.example' }, code, crypto.randomUUID(), ctx);
 			const second = await runInLoader(env, { ...testInput, url: 'https://second.example' }, code, crypto.randomUUID(), ctx);
 
-			expect(first.ok).toBe(true);
-			expect(second.ok).toBe(true);
-			if (first.ok) expect(first.value).toBe('https://first.example');
-			if (second.ok) expect(second.value).toBe('https://second.example');
+			expect(first.type).toBe('success');
+			expect(second.type).toBe('success');
+			if (first.type === 'success') expect(first.value).toBe('https://first.example');
+			if (second.type === 'success') expect(second.value).toBe('https://second.example');
 		});
 	});
 
@@ -382,8 +386,8 @@ describe('runInLoader', () => {
 
 			const result = await runInLoader(env, testInput, code, crypto.randomUUID(), ctx);
 
-			expect(result.ok).toBe(false);
-			if (!result.ok) {
+			expect(result.type).toBe('failure');
+			if (result.type === 'failure') {
 				// Either loader_failed (if module fails to load) or no_transform (if loads but no default)
 				expect(result.error.kind === 'no_transform' || result.error.kind === 'loader_failed').toBe(true);
 			}
@@ -394,8 +398,8 @@ describe('runInLoader', () => {
 
 			const result = await runInLoader(env, testInput, code, crypto.randomUUID(), ctx);
 
-			expect(result.ok).toBe(false);
-			if (!result.ok) {
+			expect(result.type).toBe('failure');
+			if (result.type === 'failure') {
 				expect(result.error.kind).toBe('no_transform');
 			}
 		});
@@ -405,8 +409,8 @@ describe('runInLoader', () => {
 
 			const result = await runInLoader(env, testInput, code, crypto.randomUUID(), ctx);
 
-			expect(result.ok).toBe(true);
-			if (result.ok) {
+			expect(result.type).toBe('success');
+			if (result.type === 'success') {
 				expect(result.value).toBe(undefined);
 			}
 		});
@@ -416,8 +420,8 @@ describe('runInLoader', () => {
 
 			const result = await runInLoader(env, testInput, code, crypto.randomUUID(), ctx);
 
-			expect(result.ok).toBe(true);
-			if (result.ok) {
+			expect(result.type).toBe('success');
+			if (result.type === 'success') {
 				expect(result.value).toBe(0);
 			}
 		});
@@ -427,8 +431,8 @@ describe('runInLoader', () => {
 
 			const result = await runInLoader(env, testInput, code, crypto.randomUUID(), ctx);
 
-			expect(result.ok).toBe(true);
-			if (result.ok) {
+			expect(result.type).toBe('success');
+			if (result.type === 'success') {
 				expect(result.value).toBe('');
 			}
 		});
@@ -438,8 +442,8 @@ describe('runInLoader', () => {
 
 			const result = await runInLoader(env, testInput, code, crypto.randomUUID(), ctx);
 
-			expect(result.ok).toBe(true);
-			if (result.ok) {
+			expect(result.type).toBe('success');
+			if (result.type === 'success') {
 				expect(Array.isArray(result.value)).toBe(true);
 				expect(result.value).toHaveLength(0);
 			}
@@ -450,8 +454,8 @@ describe('runInLoader', () => {
 
 			const result = await runInLoader(env, testInput, code, crypto.randomUUID(), ctx);
 
-			expect(result.ok).toBe(true);
-			if (result.ok) {
+			expect(result.type).toBe('success');
+			if (result.type === 'success') {
 				expect(typeof result.value).toBe('object');
 				expect(result.value).toEqual({});
 			}
@@ -469,9 +473,9 @@ describe('runInLoader', () => {
 			const result2 = await runInLoader(env, testInput, code, crypto.randomUUID(), ctx);
 
 			// Both should succeed and return same value
-			expect(result1.ok).toBe(true);
-			expect(result2.ok).toBe(true);
-			if (result1.ok && result2.ok) {
+			expect(result1.type).toBe('success');
+			expect(result2.type).toBe('success');
+			if (result1.type === 'success' && result2.type === 'success') {
 				expect(result1.value).toBe(result2.value);
 				expect(result1.value).toBe(200);
 			}
@@ -484,9 +488,9 @@ describe('runInLoader', () => {
 			const result1 = await runInLoader(env, testInput, code1, crypto.randomUUID(), ctx);
 			const result2 = await runInLoader(env, testInput, code2, crypto.randomUUID(), ctx);
 
-			expect(result1.ok).toBe(true);
-			expect(result2.ok).toBe(true);
-			if (result1.ok && result2.ok) {
+			expect(result1.type).toBe('success');
+			expect(result2.type).toBe('success');
+			if (result1.type === 'success' && result2.type === 'success') {
 				expect(result1.value).toBe(1);
 				expect(result2.value).toBe(2);
 			}

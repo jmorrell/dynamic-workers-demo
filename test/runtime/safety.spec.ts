@@ -14,6 +14,7 @@ describe('Safety demos: hostile code containment', () => {
 			finalUrl: 'https://example.com/test',
 			status: 200,
 			contentType: 'text/html',
+			responseHeaders: new Map(),
 			body: '<html>Test page</html>',
 			truncated: false,
 		};
@@ -31,8 +32,8 @@ export default async function transform(input) {
 `;
 			const result = await runInLoader(env, testInput, blockedFetchCode, crypto.randomUUID(), ctx);
 
-			expect(result.ok).toBe(false);
-			if (!result.ok) {
+			expect(result.type).toBe('failure');
+			if (result.type === 'failure') {
 				// Must be network_blocked per AC5.2
 				expect(result.error.kind).toBe('network_blocked');
 				// The error message should mention the blocked access
@@ -85,8 +86,8 @@ export default async function transform(input) {
 
 				// All trivial requests must succeed
 				results.forEach((result) => {
-					expect(result.ok).toBe(true);
-					if (result.ok) {
+					expect(result.type).toBe('success');
+					if (result.type === 'success') {
 						expect(result.value).toEqual({ received: true, url: testInput.url });
 					}
 				});
@@ -104,11 +105,11 @@ export default async function transform(input) {
 				const result3 = await runInLoader(env, testInput, trivialCode, crypto.randomUUID(), ctx);
 
 				// All should succeed
-				expect(result1.ok).toBe(true);
-				expect(result2.ok).toBe(true);
-				expect(result3.ok).toBe(true);
+				expect(result1.type).toBe('success');
+				expect(result2.type).toBe('success');
+				expect(result3.type).toBe('success');
 
-				if (result1.ok && result2.ok && result3.ok) {
+				if (result1.type === 'success' && result2.type === 'success' && result3.type === 'success') {
 					expect(result1.value).toBe(200);
 					expect(result2.value).toBe(200);
 					expect(result3.value).toBe(200);

@@ -79,7 +79,7 @@ export async function runInLoader(
 		const message = err instanceof Error ? err.message : String(err);
 		const kind = classifyLoaderError(message);
 		return {
-			ok: false,
+			type: 'failure',
 			error: {
 				kind,
 				message,

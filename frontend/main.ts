@@ -218,9 +218,9 @@ async function onRunClick(): Promise<void> {
 	const payload: Record<string, unknown> = { url };
 
 	if (state.isCustomCode) {
-		payload.customCode = jar.toString();
+		payload.worker = { type: 'custom', customCode: jar.toString() };
 	} else if (state.selectedExampleId) {
-		payload.exampleId = state.selectedExampleId;
+		payload.worker = { type: 'example', exampleId: state.selectedExampleId };
 	}
 
 	// Get the Turnstile token if the widget is ready

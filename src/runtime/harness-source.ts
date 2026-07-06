@@ -34,7 +34,7 @@ export default class Harness extends WorkerEntrypoint {
     const transform = (userModule?.default) ?? userModule;
     if (typeof transform !== 'function') {
       return {
-        ok: false,
+        type: 'failure',
         error: {
           kind: 'no_transform',
           message: 'Module does not export a transform function',
@@ -44,11 +44,11 @@ export default class Harness extends WorkerEntrypoint {
 
     try {
       const value = await transform(input);
-      return { ok: true, value };
+      return { type: 'success', value };
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       return {
-        ok: false,
+        type: 'failure',
         error: {
           kind: classifyTransformError(message),
           message,

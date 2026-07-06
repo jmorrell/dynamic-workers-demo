@@ -276,6 +276,7 @@ describe('Example transforms through loader (AC2.1–AC2.5)', () => {
 				finalUrl: 'https://example.com/article',
 				status: 200,
 				contentType: 'text/html',
+				responseHeaders: new Map(),
 				body: FIXTURES.articleHtml,
 				truncated: false,
 			};
@@ -283,8 +284,8 @@ describe('Example transforms through loader (AC2.1–AC2.5)', () => {
 			const ctx = createExecutionContext();
 			const result = await runInLoader(env, input, example.code, crypto.randomUUID(), ctx);
 
-			expect(result.ok).toBe(true);
-			if (result.ok) {
+			expect(result.type).toBe('success');
+			if (result.type === 'success') {
 				const output = result.value as { title: unknown; markdown: unknown; error?: unknown };
 				// Defuddle ran cleanly (no caught error) and produced non-empty markdown.
 				expect(output.error).toBeUndefined();
@@ -307,6 +308,7 @@ describe('Example transforms through loader (AC2.1–AC2.5)', () => {
 				finalUrl: 'https://store.example.com/products/amazing-product',
 				status: 200,
 				contentType: 'text/html',
+				responseHeaders: new Map(),
 				body: FIXTURES.ogTaggedHtml,
 				truncated: false,
 			};
@@ -314,8 +316,8 @@ describe('Example transforms through loader (AC2.1–AC2.5)', () => {
 			const ctx = createExecutionContext();
 			const result = await runInLoader(env, input, example.code, crypto.randomUUID(), ctx);
 
-			expect(result.ok).toBe(true);
-			if (result.ok) {
+			expect(result.type).toBe('success');
+			if (result.type === 'success') {
 				const output = result.value as Record<string, string>;
 				expect(output['og:title']).toBe('Amazing Product');
 				expect(output['og:description']).toContain('best product');
@@ -337,6 +339,7 @@ describe('Example transforms through loader (AC2.1–AC2.5)', () => {
 				finalUrl: 'https://www.reddit.com/r/webdev/comments/abc123.json',
 				status: 200,
 				contentType: 'application/json',
+				responseHeaders: new Map(),
 				body: FIXTURES.redditJson,
 				truncated: false,
 			};
@@ -344,8 +347,8 @@ describe('Example transforms through loader (AC2.1–AC2.5)', () => {
 			const ctx = createExecutionContext();
 			const result = await runInLoader(env, input, example.code, crypto.randomUUID(), ctx);
 
-			expect(result.ok).toBe(true);
-			if (result.ok) {
+			expect(result.type).toBe('success');
+			if (result.type === 'success') {
 				const output = result.value as Array<Record<string, unknown>>;
 				expect(Array.isArray(output)).toBe(true);
 				expect(output.length).toBeGreaterThan(0);
@@ -374,6 +377,7 @@ describe('Example transforms through loader (AC2.1–AC2.5)', () => {
 				finalUrl: 'https://hn.algolia.com/api/v1/items/39284928',
 				status: 200,
 				contentType: 'application/json',
+				responseHeaders: new Map(),
 				body: FIXTURES.hnAlgoliaJson,
 				truncated: false,
 			};
@@ -381,8 +385,8 @@ describe('Example transforms through loader (AC2.1–AC2.5)', () => {
 			const ctx = createExecutionContext();
 			const result = await runInLoader(env, input, example.code, crypto.randomUUID(), ctx);
 
-			expect(result.ok).toBe(true);
-			if (result.ok) {
+			expect(result.type).toBe('success');
+			if (result.type === 'success') {
 				const output = result.value as Array<Record<string, unknown>>;
 				expect(Array.isArray(output)).toBe(true);
 				expect(output.length).toBeGreaterThan(0);
@@ -411,6 +415,7 @@ describe('Example transforms through loader (AC2.1–AC2.5)', () => {
 				finalUrl: 'https://example.com/empty',
 				status: 200,
 				contentType: 'text/html',
+				responseHeaders: new Map(),
 				body: '',
 				truncated: false,
 			};
@@ -421,8 +426,8 @@ describe('Example transforms through loader (AC2.1–AC2.5)', () => {
 			// The markdown transform's try/catch keeps it total: even on empty/garbage
 			// input it returns ok:true with a structured object (markdown is always a
 			// string), never an unhandled crash (AC2.5).
-			expect(result.ok).toBe(true);
-			if (result.ok) {
+			expect(result.type).toBe('success');
+			if (result.type === 'success') {
 				const output = result.value as { markdown: unknown };
 				expect(typeof output.markdown).toBe('string');
 			}
@@ -438,6 +443,7 @@ describe('Example transforms through loader (AC2.1–AC2.5)', () => {
 				finalUrl: 'https://example.com/simple',
 				status: 200,
 				contentType: 'text/html',
+				responseHeaders: new Map(),
 				body: FIXTURES.noOgHtml,
 				truncated: false,
 			};
@@ -445,8 +451,8 @@ describe('Example transforms through loader (AC2.1–AC2.5)', () => {
 			const ctx = createExecutionContext();
 			const result = await runInLoader(env, input, example.code, crypto.randomUUID(), ctx);
 
-			expect(result.ok).toBe(true);
-			if (result.ok) {
+			expect(result.type).toBe('success');
+			if (result.type === 'success') {
 				const output = result.value as Record<string, unknown>;
 				expect(Object.keys(output).length).toBe(0);
 			}
@@ -462,6 +468,7 @@ describe('Example transforms through loader (AC2.1–AC2.5)', () => {
 				finalUrl: 'https://www.reddit.com/r/test/comments/invalid.json',
 				status: 200,
 				contentType: 'application/json',
+				responseHeaders: new Map(),
 				body: 'not valid json',
 				truncated: false,
 			};
@@ -469,8 +476,8 @@ describe('Example transforms through loader (AC2.1–AC2.5)', () => {
 			const ctx = createExecutionContext();
 			const result = await runInLoader(env, input, example.code, crypto.randomUUID(), ctx);
 
-			expect(result.ok).toBe(true);
-			if (result.ok) {
+			expect(result.type).toBe('success');
+			if (result.type === 'success') {
 				const output = result.value as unknown;
 				expect(Array.isArray(output)).toBe(true);
 				expect((output as Array<unknown>).length).toBe(0);
@@ -487,6 +494,7 @@ describe('Example transforms through loader (AC2.1–AC2.5)', () => {
 				finalUrl: 'https://hn.algolia.com/api/v1/items/invalid',
 				status: 200,
 				contentType: 'application/json',
+				responseHeaders: new Map(),
 				body: 'invalid json',
 				truncated: false,
 			};
@@ -494,8 +502,8 @@ describe('Example transforms through loader (AC2.1–AC2.5)', () => {
 			const ctx = createExecutionContext();
 			const result = await runInLoader(env, input, example.code, crypto.randomUUID(), ctx);
 
-			expect(result.ok).toBe(true);
-			if (result.ok) {
+			expect(result.type).toBe('success');
+			if (result.type === 'success') {
 				const output = result.value as unknown;
 				expect(Array.isArray(output)).toBe(true);
 				expect((output as Array<unknown>).length).toBe(0);
@@ -527,6 +535,7 @@ describe('Example transforms through loader (AC2.1–AC2.5)', () => {
 				finalUrl: 'https://example.com',
 				status: 200,
 				contentType: 'text/html',
+				responseHeaders: new Map(),
 				body: '<html></html>',
 				truncated: false,
 			};
@@ -536,8 +545,8 @@ describe('Example transforms through loader (AC2.1–AC2.5)', () => {
 
 			// fetch() is blocked by globalOutbound: null; the harness converts the
 			// thrown error into a structured network_blocked result (no host crash).
-			expect(result.ok).toBe(false);
-			if (!result.ok) {
+			expect(result.type).toBe('failure');
+			if (result.type === 'failure') {
 				expect(result.error.kind).toBe('network_blocked');
 			}
 		});

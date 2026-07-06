@@ -20,7 +20,7 @@ export async function fetchTarget(
 		new URL(url);
 	} catch {
 		return {
-			ok: false,
+			type: 'failure',
 			error: {
 				kind: 'fetch_failed',
 				message: `invalid URL: ${url}`,
@@ -48,7 +48,7 @@ export async function fetchTarget(
 		// Check response status
 		if (!response.ok) {
 			return {
-				ok: false,
+				type: 'failure',
 				error: {
 					kind: 'fetch_failed',
 					message: `HTTP ${response.status}: ${response.statusText || 'error'}`,
@@ -110,18 +110,19 @@ export async function fetchTarget(
 			finalUrl: response.url,
 			status: response.status,
 			contentType,
+			responseHeaders: new Map(response.headers),
 			body,
 			truncated,
 		};
 
-		return { ok: true, input };
+		return { type: 'success', input };
 	} catch (err) {
 		clearTimeout(timeoutId);
 
 		const message = err instanceof Error ? err.message : String(err);
 
 		return {
-			ok: false,
+			type: 'failure',
 			error: {
 				kind: 'fetch_failed',
 				message: `fetch failed: ${message}`,

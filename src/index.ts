@@ -1,6 +1,6 @@
 import { fetchTarget } from './runtime/fetch-target';
 import { runInLoader } from './runtime/loader';
-import type { RunErrorKind } from './runtime/types';
+import type { RunErrorKind, RunRequestBody, UserWorker } from './runtime/types';
 import { listExamples, getExample } from './examples/manifest';
 import { LogSession } from './runtime/log-session';
 import { LogTailer } from './runtime/log-tailer';
@@ -71,12 +71,7 @@ async function handleRun(request: Request, env: Env, ctx: ExecutionContext): Pro
 		return jsonError(400, 'bad_request', 'Missing required field: url');
 	}
 
-	const { exampleId, customCode, url, turnstileToken } = body as {
-		exampleId: unknown;
-		customCode: unknown;
-		url: unknown;
-		turnstileToken?: unknown;
-	};
+	const { url, worker, turnstileToken } = body as Partial<Record<keyof RunRequestBody, unknown>>;
 
 	// GATE 1: Rate limit by client IP
 	const clientIp = request.headers.get('CF-Connecting-IP') ?? 'anonymous';
@@ -105,45 +100,52 @@ async function handleRun(request: Request, env: Env, ctx: ExecutionContext): Pro
 		return jsonError(400, 'bad_request', 'url must be a string');
 	}
 
-	// Resolve code: either from exampleId or customCode, but not both
+	// Validate worker
+	if (typeof worker !== 'object' || worker === null) {
+		return jsonError(400, 'bad_request', 'Missing required field: worker');
+	}
+
+	const { type: workerType, exampleId, customCode } = worker as Partial<
+		{ type?: unknown } & Record<'exampleId' | 'customCode', unknown>
+	>;
+
+	let userWorker: UserWorker;
+	if (workerType === 'example') {
+		if (typeof exampleId !== 'string') {
+			return jsonError(400, 'bad_request', 'exampleId must be a string');
+		}
+		userWorker = { type: 'example', exampleId };
+	} else if (workerType === 'custom') {
+		if (typeof customCode !== 'string') {
+			return jsonError(400, 'bad_request', 'customCode must be a string');
+		}
+		userWorker = { type: 'custom', customCode };
+	} else {
+		return jsonError(400, 'bad_request', 'worker.type must be "example" or "custom"');
+	}
+
+	// Resolve code from the worker union
 	let code: string;
 	// Saved examples pin their own compat date; custom code falls back to
 	// runInLoader's default (see src/runtime/loader.ts DEFAULT_COMPAT_DATE).
 	let compatDate: string | undefined;
 
-	if (exampleId !== undefined) {
-		// exampleId provided - look it up
-		if (customCode !== undefined) {
-			return jsonError(400, 'bad_request', 'Cannot specify both exampleId and customCode - provide exactly one');
-		}
-
-		if (typeof exampleId !== 'string') {
-			return jsonError(400, 'bad_request', 'exampleId must be a string');
-		}
-
-		const example = getExample(exampleId);
+	if (userWorker.type === 'example') {
+		const example = getExample(userWorker.exampleId);
 		if (!example) {
-			return jsonError(404, 'bad_request', `Unknown example: ${exampleId}`);
+			return jsonError(404, 'bad_request', `Unknown example: ${userWorker.exampleId}`);
 		}
 
 		code = example.code;
 		compatDate = example.compatDate;
-	} else if (customCode !== undefined) {
-		// customCode provided
-		if (typeof customCode !== 'string') {
-			return jsonError(400, 'bad_request', 'customCode must be a string');
-		}
-
-		code = customCode;
 	} else {
-		// Neither provided
-		return jsonError(400, 'bad_request', 'Must provide either exampleId or customCode');
+		code = userWorker.customCode;
 	}
 
 	// Fetch target URL
 	const fetchOutcome = await fetchTarget(url);
 
-	if (!fetchOutcome.ok) {
+	if (fetchOutcome.type !== 'success') {
 		// Fetch failed - return error without invoking loader
 		return new Response(
 			JSON.stringify({
@@ -170,9 +172,9 @@ async function handleRun(request: Request, env: Env, ctx: ExecutionContext): Pro
 
 	return new Response(
 		JSON.stringify({
-			ok: result.ok,
-			result: result.ok ? result.value : null,
-			error: !result.ok ? result.error : null,
+			ok: result.type === 'success',
+			result: result.type === 'success' ? result.value : null,
+			error: result.type === 'failure' ? result.error : null,
 			logs: logs.lines,
 			logsTruncated: logs.truncated,
 			timingMs,

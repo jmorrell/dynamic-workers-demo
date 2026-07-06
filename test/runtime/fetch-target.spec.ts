@@ -14,8 +14,8 @@ describe('fetchTarget', () => {
 	describe('URL validation', () => {
 		it('rejects invalid URLs', async () => {
 			const result = await fetchTarget('not a url');
-			expect(result.ok).toBe(false);
-			if (!result.ok) {
+			expect(result.type).toBe('failure');
+			if (result.type === 'failure') {
 				expect(result.error.kind).toBe('fetch_failed');
 				expect(result.error.message).toContain('invalid');
 			}
@@ -23,7 +23,7 @@ describe('fetchTarget', () => {
 
 		it('rejects relative URLs', async () => {
 			const result = await fetchTarget('/path/to/page');
-			expect(result.ok).toBe(false);
+			expect(result.type).toBe('failure');
 		});
 
 		it('accepts http URLs', async () => {
@@ -40,7 +40,7 @@ describe('fetchTarget', () => {
 			);
 
 			const result = await fetchTarget('http://example.com/page');
-			expect(result.ok).toBe(true);
+			expect(result.type).toBe('success');
 		});
 
 		it('accepts https URLs', async () => {
@@ -57,7 +57,7 @@ describe('fetchTarget', () => {
 			);
 
 			const result = await fetchTarget('https://example.com/page');
-			expect(result.ok).toBe(true);
+			expect(result.type).toBe('success');
 		});
 	});
 
@@ -77,8 +77,8 @@ describe('fetchTarget', () => {
 
 			const result = await fetchTarget('https://example.com/test');
 
-			expect(result.ok).toBe(true);
-			if (result.ok) {
+			expect(result.type).toBe('success');
+			if (result.type === 'success') {
 				const input = result.input;
 				expect(input.url).toBe('https://example.com/test');
 				expect(input.status).toBe(200);
@@ -108,8 +108,8 @@ describe('fetchTarget', () => {
 
 			const result = await fetchTarget('https://example.com/original');
 
-			expect(result.ok).toBe(true);
-			if (result.ok) {
+			expect(result.type).toBe('success');
+			if (result.type === 'success') {
 				expect(result.input.finalUrl).toBe('https://example.com/final');
 			}
 		});
@@ -130,8 +130,8 @@ describe('fetchTarget', () => {
 
 			const result = await fetchTarget('https://example.com/large');
 
-			expect(result.ok).toBe(true);
-			if (result.ok) {
+			expect(result.type).toBe('success');
+			if (result.type === 'success') {
 				expect(result.input.truncated).toBe(true);
 				expect(result.input.body.length).toBeLessThanOrEqual(256 * 1024);
 			}
@@ -152,8 +152,8 @@ describe('fetchTarget', () => {
 
 			const result = await fetchTarget('https://example.com/json');
 
-			expect(result.ok).toBe(true);
-			if (result.ok) {
+			expect(result.type).toBe('success');
+			if (result.type === 'success') {
 				expect(result.input.contentType).toBe('application/json; charset=utf-8');
 			}
 		});
@@ -175,8 +175,8 @@ describe('fetchTarget', () => {
 
 			const result = await fetchTarget('https://example.com/notfound');
 
-			expect(result.ok).toBe(false);
-			if (!result.ok) {
+			expect(result.type).toBe('failure');
+			if (result.type === 'failure') {
 				expect(result.error.kind).toBe('fetch_failed');
 				expect(result.error.message).toContain('404');
 			}
@@ -190,8 +190,8 @@ describe('fetchTarget', () => {
 
 			const result = await fetchTarget('https://unreachable.example.com');
 
-			expect(result.ok).toBe(false);
-			if (!result.ok) {
+			expect(result.type).toBe('failure');
+			if (result.type === 'failure') {
 				expect(result.error.kind).toBe('fetch_failed');
 			}
 		});
@@ -204,8 +204,8 @@ describe('fetchTarget', () => {
 
 			const result = await fetchTarget('https://slow.example.com');
 
-			expect(result.ok).toBe(false);
-			if (!result.ok) {
+			expect(result.type).toBe('failure');
+			if (result.type === 'failure') {
 				expect(result.error.kind).toBe('fetch_failed');
 			}
 		});
@@ -235,8 +235,8 @@ describe('fetchTarget', () => {
 			});
 
 			// Should fail due to abort
-			expect(result.ok).toBe(false);
-			if (!result.ok) {
+			expect(result.type).toBe('failure');
+			if (result.type === 'failure') {
 				expect(result.error.kind).toBe('fetch_failed');
 				// Verify fetch was called with an abort signal
 				expect(fetchMock).toHaveBeenCalled();
@@ -258,8 +258,8 @@ describe('fetchTarget', () => {
 
 			const result = await fetchTarget('https://example.com/error');
 
-			expect(result.ok).toBe(false);
-			if (!result.ok) {
+			expect(result.type).toBe('failure');
+			if (result.type === 'failure') {
 				expect(result.error.kind).toBe('fetch_failed');
 			}
 		});
@@ -282,8 +282,8 @@ describe('fetchTarget', () => {
 
 			const result = await fetchTarget('https://example.com/utf8');
 
-			expect(result.ok).toBe(true);
-			if (result.ok) {
+			expect(result.type).toBe('success');
+			if (result.type === 'success') {
 				expect(result.input.body).toBe(utf8Text);
 			}
 		});

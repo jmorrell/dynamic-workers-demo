@@ -127,7 +127,7 @@ describe('POST /api/run handler', () => {
 			expect(response.status).toBe(400);
 		});
 
-		it('returns 400 when neither customCode nor exampleId provided', async () => {
+		it('returns 400 when worker is missing', async () => {
 			const request = new IncomingRequest('http://example.com/api/run', {
 				method: 'POST',
 				body: JSON.stringify({ url: 'http://example.com' }),
@@ -141,7 +141,7 @@ describe('POST /api/run handler', () => {
 		it('returns 400 when url is missing', async () => {
 			const request = new IncomingRequest('http://example.com/api/run', {
 				method: 'POST',
-				body: JSON.stringify({ customCode: 'export default () => 42' }),
+				body: JSON.stringify({ worker: { type: 'custom', customCode: 'export default () => 42' } }),
 			});
 			const ctx = createExecutionContext();
 			const response = await worker.fetch(request, env, ctx);
@@ -149,14 +149,51 @@ describe('POST /api/run handler', () => {
 			expect(response.status).toBe(400);
 		});
 
-		it('returns 400 when both customCode and exampleId provided', async () => {
+		it('returns 400 when worker is not an object', async () => {
+			// Distinct CF-Connecting-IP so this doesn't share the 'anonymous' rate-limit
+			// budget with the other tests in this file (RATE_LIMITER has real per-key
+			// state under vitest-pool-workers, unlike the AGENTS.md no-op-locally note
+			// which applies to the deployed RATE_LIMITER's actual counting accuracy).
 			const request = new IncomingRequest('http://example.com/api/run', {
 				method: 'POST',
-				body: JSON.stringify({
-					customCode: 'export default () => 42',
-					exampleId: 'opengraph',
-					url: 'http://example.com',
-				}),
+				headers: { 'CF-Connecting-IP': '203.0.113.201' },
+				body: JSON.stringify({ url: 'http://example.com', worker: 'export default () => 42' }),
+			});
+			const ctx = createExecutionContext();
+			const response = await worker.fetch(request, env, ctx);
+			await waitOnExecutionContext(ctx);
+			expect(response.status).toBe(400);
+		});
+
+		it('returns 400 when worker.type is unknown', async () => {
+			const request = new IncomingRequest('http://example.com/api/run', {
+				method: 'POST',
+				headers: { 'CF-Connecting-IP': '203.0.113.202' },
+				body: JSON.stringify({ url: 'http://example.com', worker: { type: 'bogus' } }),
+			});
+			const ctx = createExecutionContext();
+			const response = await worker.fetch(request, env, ctx);
+			await waitOnExecutionContext(ctx);
+			expect(response.status).toBe(400);
+		});
+
+		it('returns 400 when worker.type is example but exampleId is not a string', async () => {
+			const request = new IncomingRequest('http://example.com/api/run', {
+				method: 'POST',
+				headers: { 'CF-Connecting-IP': '203.0.113.203' },
+				body: JSON.stringify({ url: 'http://example.com', worker: { type: 'example', exampleId: 42 } }),
+			});
+			const ctx = createExecutionContext();
+			const response = await worker.fetch(request, env, ctx);
+			await waitOnExecutionContext(ctx);
+			expect(response.status).toBe(400);
+		});
+
+		it('returns 400 when worker.type is custom but customCode is not a string', async () => {
+			const request = new IncomingRequest('http://example.com/api/run', {
+				method: 'POST',
+				headers: { 'CF-Connecting-IP': '203.0.113.204' },
+				body: JSON.stringify({ url: 'http://example.com', worker: { type: 'custom', customCode: 42 } }),
 			});
 			const ctx = createExecutionContext();
 			const response = await worker.fetch(request, env, ctx);
@@ -172,7 +209,7 @@ describe('POST /api/run handler', () => {
 			const request = new IncomingRequest('http://example.com/api/run', {
 				method: 'POST',
 				body: JSON.stringify({
-					exampleId: 'nonexistent-example',
+					worker: { type: 'example', exampleId: 'nonexistent-example' },
 					url: 'http://invalid-url-that-does-not-exist.test',
 				}),
 			});
@@ -189,7 +226,7 @@ describe('POST /api/run handler', () => {
 			const request = new IncomingRequest('http://example.com/api/run', {
 				method: 'POST',
 				body: JSON.stringify({
-					customCode: transformCode,
+					worker: { type: 'custom', customCode: transformCode },
 					url: 'http://example.com/test',
 				}),
 			});
@@ -218,7 +255,7 @@ describe('POST /api/run handler', () => {
 			const request = new IncomingRequest('http://example.com/api/run', {
 				method: 'POST',
 				body: JSON.stringify({
-					exampleId: 'opengraph',
+					worker: { type: 'example', exampleId: 'opengraph' },
 					url: 'http://example.com/test',
 				}),
 			});
@@ -250,7 +287,7 @@ describe('POST /api/run handler', () => {
 			const request = new IncomingRequest('http://example.com/api/run', {
 				method: 'POST',
 				body: JSON.stringify({
-					customCode: transformCode,
+					worker: { type: 'custom', customCode: transformCode },
 					url: 'http://invalid-url-that-does-not-exist.test',
 				}),
 			});
@@ -277,7 +314,7 @@ describe('POST /api/run handler', () => {
 			const request = new IncomingRequest('http://example.com/api/run', {
 				method: 'POST',
 				body: JSON.stringify({
-					customCode: 'export default () => 42',
+					worker: { type: 'custom', customCode: 'export default () => 42' },
 					url: 'http://example.com',
 				}),
 			});
@@ -292,7 +329,7 @@ describe('POST /api/run handler', () => {
 			const request = new IncomingRequest('http://example.com/api/run', {
 				method: 'POST',
 				body: JSON.stringify({
-					customCode: 'export default () => 42',
+					worker: { type: 'custom', customCode: 'export default () => 42' },
 					url: 'http://example.com',
 				}),
 			});
@@ -310,7 +347,7 @@ describe('POST /api/run handler', () => {
 			const request = new IncomingRequest('http://example.com/api/run', {
 				method: 'POST',
 				body: JSON.stringify({
-					customCode: transformCode,
+					worker: { type: 'custom', customCode: transformCode },
 					url: 'http://example.com',
 				}),
 			});
