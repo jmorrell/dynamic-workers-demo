@@ -3,8 +3,8 @@ import { EXAMPLES, listExamples, getExample } from '../../src/examples/manifest'
 
 describe('manifest', () => {
 	describe('EXAMPLES', () => {
-		it('contains all nine examples', () => {
-			expect(EXAMPLES).toHaveLength(9);
+		it('contains all eleven examples', () => {
+			expect(EXAMPLES).toHaveLength(11);
 		});
 
 		it('has required ids', () => {
@@ -12,12 +12,14 @@ describe('manifest', () => {
 			expect(ids).toContain('markdown');
 			expect(ids).toContain('opengraph');
 			expect(ids).toContain('hackernews');
+			expect(ids).toContain('rss-digest');
 			expect(ids).toContain('cpu-spin');
 			expect(ids).toContain('blocked-fetch');
 			expect(ids).toContain('wasm-add');
 			expect(ids).toContain('image-hash');
 			expect(ids).toContain('github-repo');
 			expect(ids).toContain('arxiv-pdf');
+			expect(ids).toContain('arxiv-digest');
 		});
 
 		it('each example has non-empty code string', () => {
@@ -39,7 +41,7 @@ describe('manifest', () => {
 	describe('listExamples()', () => {
 		it('returns all examples without code field', () => {
 			const examples = listExamples();
-			expect(examples).toHaveLength(9);
+			expect(examples).toHaveLength(11);
 
 			for (const example of examples) {
 				expect('code' in example).toBe(false);
@@ -59,6 +61,14 @@ describe('manifest', () => {
 			expect(wasmAdd?.modules?.[0]).toEqual({ name: 'add.wasm', kind: 'wasm', assetPath: '/modules/wasm-add/add.wasm' });
 		});
 
+		it('dedupes identical module binaries shared across examples (arxiv-digest reuses arxiv-pdf\'s liteparse.wasm asset)', () => {
+			const examples = listExamples();
+			const arxivPdf = examples.find((e) => e.id === 'arxiv-pdf');
+			const arxivDigest = examples.find((e) => e.id === 'arxiv-digest');
+			expect(arxivPdf?.modules?.[0]?.assetPath).toBeTruthy();
+			expect(arxivDigest?.modules?.[0]?.assetPath).toBe(arxivPdf?.modules?.[0]?.assetPath);
+		});
+
 		it('never includes module base64 for any listed example (bytes are static assets)', () => {
 			const examples = listExamples();
 			for (const example of examples) {
@@ -67,6 +77,14 @@ describe('manifest', () => {
 					expect(module.assetPath).toMatch(/^\/modules\//);
 				}
 			}
+		});
+	});
+
+	describe('permissions round-trip', () => {
+		it('exposes fetchDepth on arxiv-digest in the listing', () => {
+			const examples = listExamples();
+			const arxivDigest = examples.find((e) => e.id === 'arxiv-digest');
+			expect(arxivDigest?.permissions).toEqual({ fetch: 'page-links', fetchDepth: 2, cpuMs: 5000 });
 		});
 	});
 

@@ -63,6 +63,16 @@ export const EXAMPLE_REGISTRY: ReadonlyArray<ExampleMeta> = [
 		compatDate: '2026-06-22',
 	},
 	{
+		id: 'rss-digest',
+		title: 'RSS Feed Digest (env.fetch)',
+		description:
+			"Parses an RSS or Atom feed's items and follows each article's own link (embedded in the feed payload) to summarize it as readable markdown.",
+		suggestedUrls: ['https://blog.cloudflare.com/rss/', 'https://hnrss.org/frontpage'],
+		entry: 'src/examples/rss-digest.ts',
+		compatDate: '2026-06-22',
+		permissions: { fetch: 'page-links', cpuMs: 2000 },
+	},
+	{
 		id: 'cpu-spin',
 		title: 'CPU Spin (killed by platform)',
 		description: 'Intentional CPU-intensive workload that demonstrates platform CPU limit enforcement.',
@@ -116,6 +126,19 @@ export const EXAMPLE_REGISTRY: ReadonlyArray<ExampleMeta> = [
 		entry: 'src/examples/arxiv-pdf.ts',
 		compatDate: '2026-06-22',
 		permissions: { fetch: 'page-links', cpuMs: 5000 },
+		modules: [
+			{ name: 'liteparse.wasm', kind: 'wasm', file: 'node_modules/@llamaindex/liteparse-wasm/pkg/liteparse_wasm_bg.wasm' },
+		],
+	},
+	{
+		id: 'arxiv-digest',
+		title: 'arXiv Citations Digest (fetchDepth 2)',
+		description:
+			'Finds arXiv paper links on any citing page — a listing, a Wikipedia article, a blog post — then follows each to its abstract page and its PDF to build a digest with liteparse.',
+		suggestedUrls: ['https://arxiv.org/list/cs.LG/recent', 'https://en.wikipedia.org/wiki/Attention_Is_All_You_Need'],
+		entry: 'src/examples/arxiv-digest.ts',
+		compatDate: '2026-06-22',
+		permissions: { fetch: 'page-links', fetchDepth: 2, cpuMs: 5000 },
 		modules: [
 			{ name: 'liteparse.wasm', kind: 'wasm', file: 'node_modules/@llamaindex/liteparse-wasm/pkg/liteparse_wasm_bg.wasm' },
 		],

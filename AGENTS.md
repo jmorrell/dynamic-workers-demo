@@ -80,7 +80,11 @@ bytes via `runInLoader`'s `wasmModules` (see `src/runtime/AGENTS.md`).
   `SHARED_DEP_SPECIFIERS` in `src/examples/registry.ts`), keyed by import specifier.
 - `public/modules/<exampleId>/<name>` - from `scripts/build-examples.mjs`; raw wasm
   binaries copied from each example's registered `modules[].file` (the dir is
-  cleaned first so removed/renamed modules don't leave orphans).
+  cleaned first so removed/renamed modules don't leave orphans). Deduped by
+  resolved source file: if two examples declare the identical binary (e.g.
+  arxiv-digest and arxiv-pdf both use liteparse's wasm), it is copied once and
+  the later example's manifest entry just points its `assetPath` into the
+  earlier example's directory instead of copying again.
 - `public/app.js` - from `scripts/build-frontend.mjs`.
 - `worker-configuration.d.ts` - from `wrangler types`.
 

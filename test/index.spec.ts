@@ -46,7 +46,7 @@ describe('GET /api/examples handler', () => {
 
 		const data = await response.json<Array<{ id: string; title: string; description: string }>>();
 		expect(Array.isArray(data)).toBe(true);
-		expect(data.length).toBe(9);
+		expect(data.length).toBe(11);
 
 		// Should not contain code field
 		for (const example of data) {
@@ -933,6 +933,81 @@ export default async (env, input) => {
 		});
 	});
 
+	describe('arxiv-digest example (fetchDepth 2: page -> abstract -> PDF)', () => {
+		const pageUrl = 'http://example.com/citing-page';
+		const absUrl = 'https://arxiv.org/abs/1234.5678';
+		const pdfUrl = 'https://arxiv.org/pdf/1234.5678';
+
+		afterEach(() => {
+			vi.unstubAllGlobals();
+		});
+
+		function stubPageAbsAndPdf(): void {
+			vi.stubGlobal(
+				'fetch',
+				vi.fn((input: RequestInfo | URL) => {
+					const u = typeof input === 'string' ? input : input.toString();
+					if (u === pdfUrl) {
+						const bytes = Uint8Array.from(atob(dummyPdfBase64), (c) => c.charCodeAt(0));
+						return Promise.resolve(new Response(bytes, { status: 200, headers: { 'content-type': 'application/pdf' } }));
+					}
+					if (u === absUrl) {
+						return Promise.resolve(
+							new Response(
+								`<html><head>
+<meta name="citation_title" content="A Great Paper">
+<meta name="citation_author" content="Alice Author">
+<meta name="citation_pdf_url" content="${pdfUrl}">
+</head><body><blockquote class="abstract">Abstract: This paper is great.</blockquote></body></html>`,
+								{ status: 200, headers: { 'content-type': 'text/html' } },
+							),
+						);
+					}
+					return Promise.resolve(
+						new Response(`<html><body><a href="${absUrl}">See the paper</a></body></html>`, {
+							status: 200,
+							headers: { 'content-type': 'text/html' },
+						}),
+					);
+				}),
+			);
+		}
+
+		it('POST /api/run { type: "example", exampleId: "arxiv-digest" } grows the allowlist from the citing page to the abstract page to the PDF', async () => {
+			stubPageAbsAndPdf();
+
+			const request = new IncomingRequest('http://example.com/api/run', {
+				method: 'POST',
+				headers: { 'CF-Connecting-IP': '203.0.113.245' },
+				body: JSON.stringify({
+					worker: { type: 'example', exampleId: 'arxiv-digest' },
+					url: pageUrl,
+				}),
+			});
+			const ctx = createExecutionContext();
+			const response = await worker.fetch(request, env, ctx);
+			await waitOnExecutionContext(ctx);
+
+			expect(response.status).toBe(200);
+			const data = await response.json<{
+				ok: boolean;
+				result?: {
+					papersFound: number;
+					papers: Array<{ absUrl: string; title?: string | null; excerpt?: string; error?: string }>;
+				};
+				error?: { kind: string; message: string };
+			}>();
+
+			expect(data.ok).toBe(true);
+			expect(data.result?.papersFound).toBe(1);
+			const paper = data.result?.papers[0];
+			expect(paper?.absUrl).toBe(absUrl);
+			expect(paper?.error).toBeUndefined();
+			expect(paper?.title).toBe('A Great Paper');
+			expect(paper?.excerpt).toContain('Dummy PDF file');
+		});
+	});
+
 	describe('github-repo example (env.fetch capability, embedded-URL following)', () => {
 		const repoUrl = 'https://api.github.com/repos/cloudflare/workerd';
 		const contributorsUrl = 'https://api.github.com/repos/cloudflare/workerd/contributors';
@@ -1082,6 +1157,90 @@ export default async (env, input) => {
 			expect(data.result?.repo.fullName).toBe('cloudflare/workerd');
 			expect(data.result?.topContributors.error).toContain('rate limit exceeded');
 			expect(data.result?.languages).toEqual({ 'C++': 75, TypeScript: 20, JavaScript: 5 });
+		});
+	});
+
+	describe('rss-digest example (env.fetch capability, feed item following)', () => {
+		const feedUrl = 'http://example.com/feed.rss';
+		const article1Url = 'http://example.com/article1';
+		const article2Url = 'http://example.com/article2';
+
+		function feedBody(): string {
+			return `<?xml version="1.0"?>
+<rss version="2.0">
+<channel>
+<title>Example Feed</title>
+<item>
+<title><![CDATA[First Article]]></title>
+<link>${article1Url}</link>
+</item>
+<item>
+<title>Second Article</title>
+<link>${article2Url}</link>
+</item>
+</channel>
+</rss>`;
+		}
+
+		afterEach(() => {
+			vi.unstubAllGlobals();
+		});
+
+		it('POST /api/run { type: "example", exampleId: "rss-digest" } follows item links, tolerating a per-item failure', async () => {
+			vi.stubGlobal(
+				'fetch',
+				vi.fn((input: RequestInfo | URL) => {
+					const u = typeof input === 'string' ? input : input.toString();
+					if (u === article1Url) {
+						return Promise.resolve(
+							new Response('<html><body><article><h1>Hello</h1><p>Some words here.</p></article></body></html>', {
+								status: 200,
+								headers: { 'content-type': 'text/html' },
+							}),
+						);
+					}
+					if (u === article2Url) {
+						return Promise.resolve(new Response('Not Found', { status: 404, headers: { 'content-type': 'text/plain' } }));
+					}
+					return Promise.resolve(new Response(feedBody(), { status: 200, headers: { 'content-type': 'application/rss+xml' } }));
+				}),
+			);
+
+			const request = new IncomingRequest('http://example.com/api/run', {
+				method: 'POST',
+				headers: { 'CF-Connecting-IP': '203.0.113.244' },
+				body: JSON.stringify({
+					worker: { type: 'example', exampleId: 'rss-digest' },
+					url: feedUrl,
+				}),
+			});
+			const ctx = createExecutionContext();
+			const response = await worker.fetch(request, env, ctx);
+			await waitOnExecutionContext(ctx);
+
+			expect(response.status).toBe(200);
+			const data = await response.json<{
+				ok: boolean;
+				result?: {
+					feedTitle: string | null;
+					itemCount: number;
+					items: Array<{ title: string | null; url: string; markdown?: string; error?: string }>;
+				};
+				error?: { kind: string; message: string };
+			}>();
+
+			expect(data.ok).toBe(true);
+			expect(data.result?.feedTitle).toBe('Example Feed');
+			expect(data.result?.itemCount).toBe(2);
+
+			const first = data.result?.items.find((i) => i.url === article1Url);
+			expect(first?.title).toBe('First Article');
+			expect(first?.markdown).toBeTruthy();
+			expect(first?.error).toBeUndefined();
+
+			const second = data.result?.items.find((i) => i.url === article2Url);
+			expect(second?.title).toBe('Second Article');
+			expect(second?.error).toContain('404');
 		});
 	});
 

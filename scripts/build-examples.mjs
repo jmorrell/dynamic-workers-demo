@@ -197,6 +197,15 @@ async function buildManifest() {
 	const EXAMPLE_REGISTRY = await loadRegistry();
 	const manifestEntries = [];
 
+	// Maps a module's resolved source file path -> the assetPath it was already
+	// emitted under. Two examples can declare the identical binary (e.g.
+	// arxiv-digest and arxiv-pdf both use liteparse_wasm_bg.wasm) — we must not
+	// commit the same multi-MB binary twice under public/modules/. The first
+	// example to reference a given file "owns" its on-disk copy; a later
+	// example's manifest entry just points its assetPath into that example's
+	// directory instead of copying again.
+	const emittedModulesByFile = new Map();
+
 	for (const example of EXAMPLE_REGISTRY) {
 		console.log(`  - Bundling ${example.id}...`);
 		try {
@@ -208,13 +217,23 @@ async function buildManifest() {
 			// public/modules/<id>/<name> and record the URL path as `assetPath` —
 			// both the frontend (editor tabs) and src/index.ts (loader injection for
 			// example runs) fetch the bytes from there rather than carrying base64
-			// in the manifest (which used to bloat it to ~12 MB).
+			// in the manifest (which used to bloat it to ~12 MB). Identical binaries
+			// shared across examples are deduped (see emittedModulesByFile above) and
+			// ship once; such a module's manifest entry may therefore point into
+			// another example's directory.
 			const modules = example.modules?.length
 				? example.modules.map((m) => {
+						const sourcePath = path.resolve(repoRoot, m.file);
+						const existingAssetPath = emittedModulesByFile.get(sourcePath);
+						if (existingAssetPath) {
+							return { name: m.name, kind: m.kind, assetPath: existingAssetPath };
+						}
 						const exampleDir = path.resolve(modulesOutDir, example.id);
 						fs.mkdirSync(exampleDir, { recursive: true });
-						fs.copyFileSync(path.resolve(repoRoot, m.file), path.resolve(exampleDir, m.name));
-						return { name: m.name, kind: m.kind, assetPath: `/modules/${example.id}/${m.name}` };
+						fs.copyFileSync(sourcePath, path.resolve(exampleDir, m.name));
+						const assetPath = `/modules/${example.id}/${m.name}`;
+						emittedModulesByFile.set(sourcePath, assetPath);
+						return { name: m.name, kind: m.kind, assetPath };
 					})
 				: undefined;
 
