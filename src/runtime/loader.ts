@@ -10,6 +10,8 @@ export const CPU_LIMIT_MS = 50;
  * independently optional (compat date, injected deps, capability grant).
  * - `compatDate` — override the Dynamic Worker compat date (examples pin theirs).
  * - `extraModules` — shared dep modules injected for edited/custom code.
+ * - `wasmModules` — wasm binaries injected alongside the code, keyed by the
+ *   exact relative-import specifier's resolved key (e.g. 'add.wasm').
  * - `permissions` — capability grant; drives `limits.cpuMs` and gate attachment.
  * - `allowedUrls` — URLs referenced by the fetched page; required when
  *   `permissions.fetch === 'page-links'`, passed to the gate as props.
@@ -17,6 +19,7 @@ export const CPU_LIMIT_MS = 50;
 export type RunOptions = {
 	readonly compatDate?: string;
 	readonly extraModules?: Readonly<Record<string, string>>;
+	readonly wasmModules?: Readonly<Record<string, Uint8Array>>;
 	readonly permissions?: Permissions;
 	readonly allowedUrls?: ReadonlyArray<string>;
 };
@@ -46,7 +49,7 @@ export async function runInLoader(
 	ctx: ExecutionContext,
 	opts: RunOptions = {},
 ): Promise<RunResult> {
-	const { compatDate = DEFAULT_COMPAT_DATE, extraModules, permissions, allowedUrls } = opts;
+	const { compatDate = DEFAULT_COMPAT_DATE, extraModules, wasmModules, permissions, allowedUrls } = opts;
 	try {
 		// 1. Scope the loader id to this run, not just the code. The tail worker
 		// binding (below) is attached at isolate creation time, so an id shared
@@ -64,7 +67,7 @@ export async function runInLoader(
 			// regardless of what compatDate the caller resolved for production.
 			const compatibilityDate = env.ENVIRONMENT === 'test' && env.LOADER_COMPAT_DATE ? env.LOADER_COMPAT_DATE : compatDate;
 
-			const modules: Record<string, string | { js: string }> = {
+			const modules: Record<string, string | { js: string } | { wasm: ArrayBuffer }> = {
 				'harness.js': HARNESS_SOURCE,
 				'user.js': code,
 			};
@@ -77,6 +80,19 @@ export async function runInLoader(
 				for (const [specifier, source] of Object.entries(extraModules)) {
 					if (specifier === 'harness.js' || specifier === 'user.js') continue;
 					modules[specifier] = { js: source };
+				}
+			}
+
+			// Wasm modules (e.g. the wasm-add example's './add.wasm') are injected
+			// as the typed `{ wasm }` form, keyed the same way — same never-override
+			// guard as extraModules above.
+			if (wasmModules) {
+				for (const [name, bytes] of Object.entries(wasmModules)) {
+					if (name === 'harness.js' || name === 'user.js') continue;
+					// WorkerLoaderModule.wasm is typed as ArrayBuffer; slice() copies out
+					// exactly this view's bytes as a standalone buffer (bytes.buffer alone
+					// could be larger/shared if the Uint8Array is itself a view).
+					modules[name] = { wasm: bytes.slice().buffer };
 				}
 			}
 

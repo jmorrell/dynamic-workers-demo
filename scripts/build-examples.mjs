@@ -47,12 +47,24 @@ const SHARED_BUNDLE_OPTIONS = {
 };
 
 /**
- * Bundle example to self-contained ESM string using esbuild
+ * Bundle example to self-contained ESM string using esbuild.
+ *
+ * `hasModules` is true when the example declares non-JS modules (registry.ts
+ * `modules`, e.g. a wasm binary) — its entry imports them by relative
+ * specifier (e.g. `import mod from './add.wasm'`), which must survive
+ * verbatim into the bundled `code` string rather than have esbuild try (and
+ * fail) to load the binary itself. `external: ['*.wasm']` keeps any such
+ * import unresolved in the output; the loader injects the real module at
+ * Dynamic Worker load time (see src/runtime/loader.ts wasmModules).
  */
-async function bundleExample(entry) {
+async function bundleExample(entry, hasModules = false) {
 	const filePath = path.resolve(repoRoot, entry);
 	try {
-		const result = await esbuild.build({ ...SHARED_BUNDLE_OPTIONS, entryPoints: [filePath] });
+		const result = await esbuild.build({
+			...SHARED_BUNDLE_OPTIONS,
+			entryPoints: [filePath],
+			...(hasModules ? { external: ['*.wasm'] } : {}),
+		});
 
 		if (!result.outputFiles || result.outputFiles.length === 0) {
 			throw new Error(`No output from esbuild for ${entry}`);
@@ -175,7 +187,19 @@ async function buildManifest() {
 		console.log(`  - Bundling ${example.id}...`);
 		try {
 			const source = await readSource(example.entry);
-			const code = await bundleExample(example.entry);
+			const code = await bundleExample(example.entry, Boolean(example.modules?.length));
+
+			// Non-JS modules (currently only wasm) the example's code imports by
+			// relative specifier: read the committed binary and base64-encode it
+			// into the manifest so both the frontend (editor tabs) and src/index.ts
+			// (loader injection for example runs) can consume it without touching disk.
+			const modules = example.modules?.length
+				? example.modules.map((m) => ({
+						name: m.name,
+						kind: m.kind,
+						base64: fs.readFileSync(path.resolve(repoRoot, m.file)).toString('base64'),
+					}))
+				: undefined;
 
 			manifestEntries.push({
 				id: example.id,
@@ -188,6 +212,7 @@ async function buildManifest() {
 				// Copied through so the manifest (and thus /api/examples) carries the
 				// example's capability grant. Omitted when the example declares none.
 				...(example.permissions ? { permissions: example.permissions } : {}),
+				...(modules ? { modules } : {}),
 			});
 		} catch (error) {
 			console.error(`Failed to build example ${example.id}:`, error.message);

@@ -21,6 +21,20 @@ with their registered `permissions`; custom runs supply their own (validated,
 `cpuMs` clamped to `[1,5000]`). See `src/runtime/AGENTS.md` for the gate/extraction
 contracts.
 
+## Multi-file examples (wasm modules)
+An example (`ExampleMeta` in `src/examples/registry.ts`) may declare
+`modules: [{ name, kind: 'wasm', file }]` — non-JS modules its entry imports by
+relative specifier (e.g. `import mod from './add.wasm'`). `file` is a
+repo-relative path to a committed binary (e.g. `src/examples/add.wasm`, the
+41-byte `wasm-add` example's module); the build reads + base64-encodes it into
+the manifest entry. `scripts/build-examples.mjs` bundles such an example with
+esbuild `external: ['*.wasm']` so the relative import survives verbatim into
+`code` (esbuild never tries to load the binary itself — the loader injects the
+real module at Dynamic Worker load time). The frontend editor renders one tab
+per module (base64 text) alongside the script tab; `src/index.ts` decodes and
+injects module base64 for both example and custom runs via `runInLoader`'s
+`wasmModules` (see `src/runtime/AGENTS.md`).
+
 ## Tech Stack
 - TypeScript on Cloudflare Workers (`nodejs_compat`)
 - Dynamic Workers via `LOADER` (worker_loaders binding)

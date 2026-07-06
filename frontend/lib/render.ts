@@ -5,6 +5,8 @@ export type Permissions = {
 	readonly cpuMs?: number;
 };
 
+export type ExampleModule = { readonly name: string; readonly kind: 'wasm'; readonly base64: string };
+
 export type Example = {
 	readonly id: string;
 	readonly title: string;
@@ -12,7 +14,59 @@ export type Example = {
 	readonly suggestedUrls: ReadonlyArray<string>;
 	readonly source: string;
 	readonly permissions?: Permissions;
+	readonly modules?: ReadonlyArray<ExampleModule>;
 };
+
+// A single editor tab: the script tab (id 'script', kind 'script') or a wasm
+// module tab (id/label = module name, kind 'wasm', content = base64 text).
+export type EditorTab = { readonly id: string; readonly label: string; readonly kind: 'script' | 'wasm'; readonly content: string };
+
+// Builds the pristine tab set for a selected example: the script tab first
+// (label 'transform.ts'), then one tab per declared module. No example (or no
+// modules) yields just the script tab.
+export function exampleTabs(example: Example | undefined): Array<EditorTab> {
+	const scriptTab: EditorTab = { id: 'script', label: 'transform.ts', kind: 'script', content: example?.source ?? '' };
+	const moduleTabs: Array<EditorTab> = (example?.modules ?? []).map((m) => ({
+		id: m.name,
+		label: m.name,
+		kind: 'wasm',
+		content: m.base64,
+	}));
+	return [scriptTab, ...moduleTabs];
+}
+
+// The run is dirty (must go through the custom-code path) if there's no
+// selected example, or if ANY tab's current text differs from its pristine
+// content — not just the script tab.
+export function isTabSetDirty(pristineTabs: ReadonlyArray<EditorTab>, currentContents: ReadonlyMap<string, string>): boolean {
+	if (pristineTabs.length === 0) return true;
+	return pristineTabs.some((tab) => currentContents.get(tab.id) !== tab.content);
+}
+
+export type CustomRunModule = { readonly name: string; readonly kind: 'wasm'; readonly base64: string };
+
+// Builds the { customCode, modules? } payload shape for a dirty (or no-example)
+// custom run from the current tab contents. Wasm tab text has its whitespace
+// stripped (the editor may show it wrapped/indented) before being sent as
+// base64. `modules` is omitted entirely when there are none, per the wire contract.
+export function buildCustomRunPayload(
+	tabs: ReadonlyArray<EditorTab>,
+	currentContents: ReadonlyMap<string, string>,
+): { customCode: string; modules?: Array<CustomRunModule> } {
+	const scriptTab = tabs.find((t) => t.kind === 'script');
+	const customCode = (scriptTab && currentContents.get(scriptTab.id)) ?? '';
+
+	const moduleTabs = tabs.filter((t) => t.kind === 'wasm');
+	if (moduleTabs.length === 0) return { customCode };
+
+	const modules: Array<CustomRunModule> = moduleTabs.map((t) => ({
+		name: t.id,
+		kind: 'wasm',
+		base64: (currentContents.get(t.id) ?? '').replace(/\s+/g, ''),
+	}));
+
+	return { customCode, modules };
+}
 
 // Human-readable one-liner for the static permissions hint under the Code label.
 // Returns null when there's nothing noteworthy to surface (default no-network grant).

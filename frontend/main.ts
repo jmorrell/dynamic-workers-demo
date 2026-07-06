@@ -1,11 +1,22 @@
 // pattern: Imperative Shell
 
-import { formatRunResponse, exampleOptions, formatPermissions, type RunResponse, type Example } from './lib/render';
+import {
+	formatRunResponse,
+	exampleOptions,
+	formatPermissions,
+	exampleTabs,
+	isTabSetDirty,
+	buildCustomRunPayload,
+	type RunResponse,
+	type Example,
+	type EditorTab,
+} from './lib/render';
 import { EditorView, basicSetup } from 'codemirror';
 import { keymap } from '@codemirror/view';
 import { indentWithTab } from '@codemirror/commands';
 import { javascript } from '@codemirror/lang-javascript';
 import { indentUnit } from '@codemirror/language';
+import { Compartment, type Extension } from '@codemirror/state';
 
 const PLACEHOLDER_CODE = '// Select an example to start (or edit it — edits run as custom code)';
 
@@ -17,6 +28,18 @@ type State = {
 	isRunning: boolean;
 	turnstileWidgetId: string | null;
 	turnstileReady: boolean;
+	// Current tab set (script tab + one per module) for whatever is selected —
+	// an example, or just the bare script tab when none is. Tab identity/order
+	// come from here; live text lives in tabContents.
+	tabs: Array<EditorTab>;
+	// The selected example's pristine tabs, or [] when none is selected (which
+	// makes isTabSetDirty() always report dirty — see isDirty()).
+	pristineTabs: Array<EditorTab>;
+	// Per-tab current (possibly edited) text, keyed by tab id. The ACTIVE tab's
+	// entry is stale while it's being edited — read live text via editorText()
+	// for that one (see currentTabContents()).
+	tabContents: Map<string, string>;
+	activeTabId: string;
 };
 
 const state: State = {
@@ -25,12 +48,17 @@ const state: State = {
 	isRunning: false,
 	turnstileWidgetId: null,
 	turnstileReady: false,
+	tabs: [],
+	pristineTabs: [],
+	tabContents: new Map(),
+	activeTabId: 'script',
 };
 
 // DOM element references
 const exampleSelect = document.getElementById('example') as HTMLSelectElement;
 const urlInput = document.getElementById('url') as HTMLInputElement;
 const editorContainer = document.getElementById('editor') as HTMLDivElement;
+const editorTabsEl = document.getElementById('editor-tabs') as HTMLDivElement;
 const editorStatusEl = document.getElementById('editor-status') as HTMLSpanElement;
 const editorPermsEl = document.getElementById('editor-perms') as HTMLDivElement;
 const editorResetButton = document.getElementById('editor-reset') as HTMLButtonElement;
@@ -44,16 +72,27 @@ const suggestedUrlsSection = document.getElementById('suggested-urls-section') a
 const suggestedUrlsEl = document.getElementById('suggested-urls') as HTMLDivElement;
 const turnstileDiv = document.getElementById('turnstile') as HTMLDivElement;
 
-// Single always-editable CodeMirror instance. Pristine example code runs by
-// exampleId (pre-bundled server-side); any edit makes the doc "dirty" and it
-// runs as custom code (transpiled from TS server-side — see isDirty()).
+// Switches per-tab editor config (language support) without recreating the
+// EditorView: the script tab keeps TS-aware `javascript()`; a wasm tab (edited
+// as base64 text) gets no language extension plus line wrapping, since it has
+// no meaningful syntax to highlight and is typically one long unwrapped line.
+const languageCompartment = new Compartment();
+
+function languageExtensionFor(kind: EditorTab['kind']): Extension[] {
+	return kind === 'script' ? [javascript({ typescript: true })] : [EditorView.lineWrapping];
+}
+
+// Single always-editable CodeMirror instance shared by every tab. Pristine
+// example code runs by exampleId (pre-bundled server-side); any edit to any
+// tab makes the whole tab set "dirty" and it runs as custom code (transpiled
+// from TS server-side — see isDirty()).
 const editorView = new EditorView({
 	doc: PLACEHOLDER_CODE,
 	parent: editorContainer,
 	extensions: [
 		basicSetup,
 		keymap.of([indentWithTab]),
-		javascript({ typescript: true }),
+		languageCompartment.of(languageExtensionFor('script')),
 		indentUnit.of('\t'),
 		EditorView.theme({
 			'&': { fontSize: '13px' },
@@ -82,19 +121,62 @@ function selectedExample(): Example | undefined {
 	return state.selectedExampleId ? state.examples.find((ex) => ex.id === state.selectedExampleId) : undefined;
 }
 
-// "Dirty" means the doc no longer matches the selected example's pristine
-// source (or there's no selected example at all) — either way, a run must
-// go through the custom-code path rather than by exampleId.
+// A fresh snapshot of every tab's current text: state.tabContents for every
+// tab except the active one, whose live text lives in the editor itself.
+function currentTabContents(): Map<string, string> {
+	const contents = new Map(state.tabContents);
+	contents.set(state.activeTabId, editorText());
+	return contents;
+}
+
+// "Dirty" means the tab set no longer matches the selected example's pristine
+// tabs (or there's no selected example at all) — either way, a run must go
+// through the custom-code path rather than by exampleId.
 function isDirty(): boolean {
-	const example = selectedExample();
-	if (!example) return true;
-	return editorText() !== example.source;
+	return isTabSetDirty(state.pristineTabs, currentTabContents());
 }
 
 function updateEditorStatus(): void {
 	const dirty = isDirty();
 	editorStatusEl.style.display = dirty && state.selectedExampleId ? 'inline' : 'none';
 	editorResetButton.style.display = dirty && state.selectedExampleId ? 'inline-block' : 'none';
+}
+
+// Renders the tab bar buttons and shows/hides the whole bar — hidden whenever
+// there's nothing but the script tab (no example with modules, no custom
+// modules in play).
+function renderTabBar(): void {
+	editorTabsEl.innerHTML = '';
+	editorTabsEl.style.display = state.tabs.length > 1 ? 'flex' : 'none';
+
+	for (const tab of state.tabs) {
+		const button = document.createElement('button');
+		button.type = 'button';
+		button.className = 'editor-tab' + (tab.id === state.activeTabId ? ' active' : '');
+		button.textContent = tab.label;
+		button.addEventListener('click', () => selectTab(tab.id));
+		editorTabsEl.appendChild(button);
+	}
+}
+
+// Switches the single CodeMirror doc to a different tab: persists the
+// outgoing tab's live text, reconfigures the language compartment for the
+// incoming tab's kind, then loads its text.
+function selectTab(tabId: string): void {
+	if (tabId === state.activeTabId) return;
+
+	state.tabContents.set(state.activeTabId, editorText());
+
+	const tab = state.tabs.find((t) => t.id === tabId);
+	if (!tab) return;
+
+	state.activeTabId = tabId;
+	editorView.dispatch({ effects: languageCompartment.reconfigure(languageExtensionFor(tab.kind)) });
+	setEditorText(state.tabContents.get(tabId) ?? '');
+
+	renderTabBar();
+	updateEditorStatus();
+	updateRunButton();
 }
 
 // Static hint reflecting the selected example's capability grant. A dirty custom
@@ -197,14 +279,23 @@ function setupEventListeners(): void {
 function selectExample(selectedId: string | null): void {
 	state.selectedExampleId = selectedId;
 
-	if (selectedId) {
-		const example = state.examples.find((ex) => ex.id === selectedId);
-		if (example) {
-			setEditorText(example.source);
-			displaySuggestedUrls(example.suggestedUrls);
-		}
+	const example = selectedId ? state.examples.find((ex) => ex.id === selectedId) : undefined;
+
+	// No example → a single, empty-pristine script tab (isDirty() always true —
+	// pristineTabs stays [] rather than exampleTabs(undefined), see State docs).
+	const tabs = example ? exampleTabs(example) : [{ id: 'script', label: 'transform.ts', kind: 'script' as const, content: PLACEHOLDER_CODE }];
+	state.tabs = tabs;
+	state.pristineTabs = example ? tabs : [];
+	state.tabContents = new Map(tabs.map((t) => [t.id, t.content]));
+	state.activeTabId = 'script';
+
+	editorView.dispatch({ effects: languageCompartment.reconfigure(languageExtensionFor('script')) });
+	setEditorText(state.tabContents.get('script') ?? '');
+	renderTabBar();
+
+	if (example) {
+		displaySuggestedUrls(example.suggestedUrls);
 	} else {
-		setEditorText(PLACEHOLDER_CODE);
 		suggestedUrlsSection.style.display = 'none';
 	}
 
@@ -222,9 +313,12 @@ function clearResults(): void {
 	timingInfoEl.innerHTML = '';
 }
 
+// Restores every tab (not just the active one) to its pristine content.
 function onResetClick(): void {
-	const example = selectedExample();
-	if (example) setEditorText(example.source);
+	if (state.pristineTabs.length === 0) return;
+
+	state.tabContents = new Map(state.pristineTabs.map((t) => [t.id, t.content]));
+	setEditorText(state.tabContents.get(state.activeTabId) ?? '');
 	updateEditorStatus();
 	updateRunButton();
 }
@@ -255,7 +349,8 @@ function displaySuggestedUrls(urls: ReadonlyArray<string>): void {
 
 function updateRunButton(): void {
 	const hasUrl = urlInput.value.trim().length > 0;
-	const hasCode = editorText().trim().length > 0;
+	const scriptText = currentTabContents().get('script') ?? '';
+	const hasCode = scriptText.trim().length > 0;
 	runButton.disabled = !hasUrl || !hasCode || state.isRunning;
 }
 
@@ -271,7 +366,8 @@ async function onRunClick(): Promise<void> {
 	if (!isDirty() && state.selectedExampleId) {
 		payload.worker = { type: 'example', exampleId: state.selectedExampleId };
 	} else {
-		payload.worker = { type: 'custom', customCode: editorText() };
+		const built = buildCustomRunPayload(state.tabs, currentTabContents());
+		payload.worker = { type: 'custom', ...built };
 		// A dirty run drops out of the example path, so the server no longer sees
 		// the example's registered permissions — send them explicitly so an edited
 		// example keeps the same capability grant it had when pristine.

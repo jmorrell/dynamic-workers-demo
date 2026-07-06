@@ -9,7 +9,12 @@ export type RunInput = {
 	truncated: boolean;
 };
 
-export type UserWorker = { type: 'custom'; customCode: string } | { type: 'example'; exampleId: string };
+/** A non-JS module a custom run's code imports by relative specifier (currently only wasm). */
+export type CustomModule = { name: string; kind: 'wasm'; base64: string };
+
+export type UserWorker =
+	| { type: 'custom'; customCode: string; modules?: ReadonlyArray<CustomModule> }
+	| { type: 'example'; exampleId: string };
 
 /**
  * Capability grant handed to a transform via its first `env` argument. Default

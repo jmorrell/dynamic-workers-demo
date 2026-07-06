@@ -13,6 +13,11 @@ export type ExampleMeta = {
 	// Capability grant this example runs with. Absent → the default no-network
 	// grant. A page-links grant unlocks env.fetch against the fetched page's links.
 	readonly permissions?: Permissions;
+	// Non-JS modules the loader must inject alongside the bundled code (e.g. a
+	// wasm binary the entry imports via a relative specifier). `file` is a
+	// repo-relative path to the committed binary, read + base64-encoded at build
+	// time (scripts/build-examples.mjs) into the manifest entry.
+	readonly modules?: ReadonlyArray<{ readonly name: string; readonly kind: 'wasm'; readonly file: string }>;
 };
 
 // Modules injected into the loader for edited (custom) example code, since
@@ -66,5 +71,14 @@ export const EXAMPLE_REGISTRY: ReadonlyArray<ExampleMeta> = [
 		suggestedUrls: ['https://example.com'],
 		entry: 'src/examples/blocked-fetch.ts',
 		compatDate: '2026-06-22',
+	},
+	{
+		id: 'wasm-add',
+		title: 'WebAssembly (out of the box)',
+		description: 'The sandbox loads WebAssembly modules natively — no runtime compilation needed.',
+		suggestedUrls: ['https://example.com'],
+		entry: 'src/examples/wasm-add.ts',
+		compatDate: '2026-06-22',
+		modules: [{ name: 'add.wasm', kind: 'wasm', file: 'src/examples/add.wasm' }],
 	},
 ];

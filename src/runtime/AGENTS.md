@@ -11,7 +11,7 @@ the target URL, captures the sandbox's logs, and enforces abuse gates.
 ## Contracts
 - **Exposes**: `runInLoader(env, input, code, runId, ctx, opts?) → RunResult`
   (trailing optionals consolidated into one `RunOptions` object:
-  `{ compatDate?, extraModules?, permissions?, allowedUrls? }`); `fetchTarget(url,
+  `{ compatDate?, extraModules?, wasmModules?, permissions?, allowedUrls? }`); `fetchTarget(url,
   opts?) → FetchOutcome`; `verifyTurnstile(...)`; `transpileUserCode(source) →
   TranspileResult`; `extractLinkedUrls(body, contentType, baseUrl) → string[]`;
   DO `LogSession`; tail worker `LogTailer`; loopback gate `CapabilityGate`; types
@@ -92,6 +92,23 @@ the target URL, captures the sandbox's logs, and enforces abuse gates.
   for bare/subpath specifiers; a module key must either end in `.js` or use this
   typed form. Callers cannot override `'harness.js'` or `'user.js'` this way —
   the loader silently skips those keys if present in `extraModules`.
+- **`runInLoader`'s `wasmModules`** (`Record<string, Uint8Array>`) are injected
+  using the typed `{ wasm: ArrayBuffer }` form (`WorkerLoaderModule.wasm` is
+  typed `ArrayBuffer`, not `Uint8Array` — the loader copies each view out via
+  `.slice().buffer`), keyed the same way as `extraModules` and with the same
+  never-override-harness/user guard. `WebAssembly.instantiate(bytes)` /
+  compile-from-bytes is FORBIDDEN in workerd ("Wasm code generation disallowed
+  by embedder") at the host level AND inside Dynamic Workers — verified
+  empirically. Injecting a wasm binary straight into the modules map is the
+  sanctioned path: `import mod from './add.wasm'` inside the loaded worker
+  yields a `WebAssembly.Module`, and `WebAssembly.instantiate(mod)` (the Module
+  overload) works with no runtime compilation step. `src/index.ts` decodes
+  base64 module content (validated: at most 4 modules, `.wasm` name matching
+  `/^[A-Za-z0-9._-]+\.wasm$/`, not `harness.js`/`user.js`, 8 MiB decoded cap per
+  module — see `validateCustomModules`/`decodeBase64` in `core.ts`) for both
+  custom runs (request-supplied) and example runs (the example's manifest
+  modules — the bundled example code retains its relative wasm import, so it
+  needs the same injection a custom run would).
 - **Log capture via tail**: `LogTailer` (loopback `ctx.exports`, attached as the
   loaded worker's `tails`) forwards trace logs to `LogSession` DO, keyed by
   `runId`; the host polls `getLogs(timeoutMs)`. `LogSession` state is in-memory

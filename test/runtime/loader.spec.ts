@@ -552,6 +552,47 @@ describe('runInLoader', () => {
 		});
 	});
 
+	describe('wasmModules', () => {
+		// 41-byte wasm binary exporting add(i32,i32)->i32 — see AGENTS.md/task spec.
+		// (module (func (export "add") (param i32 i32) (result i32) local.get 0 local.get 1 i32.add))
+		const ADD_WASM_BASE64 = 'AGFzbQEAAAABBwFgAn9/AX8DAgEABwcBA2FkZAAACgkBBwAgACABags=';
+
+		function decodeBase64(base64: string): Uint8Array {
+			const binary = atob(base64);
+			const bytes = new Uint8Array(binary.length);
+			for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+			return bytes;
+		}
+
+		it('injects a wasm module importable and callable from sandbox code', async () => {
+			const code = `import addModule from './add.wasm';
+export default async (env, input) => {
+	const { exports } = await WebAssembly.instantiate(addModule);
+	return exports.add(2, 3);
+};`;
+			const wasmModules = { 'add.wasm': decodeBase64(ADD_WASM_BASE64) };
+
+			const result = await runInLoader(env, testInput, code, crypto.randomUUID(), ctx, { wasmModules });
+
+			expect(result.type).toBe('success');
+			if (result.type === 'success') {
+				expect(result.value).toBe(5);
+			}
+		});
+
+		it('cannot override user.js', async () => {
+			const code = 'export default () => "real user code";';
+			const wasmModules = { 'user.js': decodeBase64(ADD_WASM_BASE64) };
+
+			const result = await runInLoader(env, testInput, code, crypto.randomUUID(), ctx, { wasmModules });
+
+			expect(result.type).toBe('success');
+			if (result.type === 'success') {
+				expect(result.value).toBe('real user code');
+			}
+		});
+	});
+
 	describe('permissions → WorkerCode limits.cpuMs (structural; enforcement is deploy-only)', () => {
 		// Capture the WorkerCode the loader hands to LOADER.get by wrapping env with a
 		// mock LOADER whose get() invokes the code callback (so ctx.exports wiring and

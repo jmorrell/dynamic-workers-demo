@@ -1,5 +1,15 @@
 import { describe, expect, it } from 'vitest';
-import { escapeHtml, formatResultValue, formatRunResponse, exampleOptions, formatPermissions } from '../../frontend/lib/render';
+import {
+	escapeHtml,
+	formatResultValue,
+	formatRunResponse,
+	exampleOptions,
+	formatPermissions,
+	exampleTabs,
+	isTabSetDirty,
+	buildCustomRunPayload,
+	type Example,
+} from '../../frontend/lib/render';
 
 describe('render helpers', () => {
 	describe('escapeHtml', () => {
@@ -156,6 +166,101 @@ describe('render helpers', () => {
 		it('returns empty array for empty examples', () => {
 			const options = exampleOptions([]);
 			expect(options).toEqual([]);
+		});
+	});
+
+	describe('exampleTabs', () => {
+		it('returns a single script tab for an example with no modules', () => {
+			const example: Example = { id: '1', title: 'x', description: 'd', suggestedUrls: [], source: 'export default () => 1' };
+			const tabs = exampleTabs(example);
+			expect(tabs).toEqual([{ id: 'script', label: 'transform.ts', kind: 'script', content: 'export default () => 1' }]);
+		});
+
+		it('returns a single script tab (empty content) when there is no example', () => {
+			const tabs = exampleTabs(undefined);
+			expect(tabs).toEqual([{ id: 'script', label: 'transform.ts', kind: 'script', content: '' }]);
+		});
+
+		it('appends one tab per module, in order', () => {
+			const example: Example = {
+				id: '1',
+				title: 'x',
+				description: 'd',
+				suggestedUrls: [],
+				source: 'code',
+				modules: [{ name: 'add.wasm', kind: 'wasm', base64: 'AAAA' }],
+			};
+			const tabs = exampleTabs(example);
+			expect(tabs).toEqual([
+				{ id: 'script', label: 'transform.ts', kind: 'script', content: 'code' },
+				{ id: 'add.wasm', label: 'add.wasm', kind: 'wasm', content: 'AAAA' },
+			]);
+		});
+	});
+
+	describe('isTabSetDirty', () => {
+		const pristine = exampleTabs({
+			id: '1',
+			title: 'x',
+			description: 'd',
+			suggestedUrls: [],
+			source: 'code',
+			modules: [{ name: 'add.wasm', kind: 'wasm', base64: 'AAAA' }],
+		});
+
+		it('is dirty when there are no pristine tabs (no example selected)', () => {
+			expect(isTabSetDirty([], new Map([['script', 'anything']]))).toBe(true);
+		});
+
+		it('is not dirty when every tab matches pristine content', () => {
+			const current = new Map([
+				['script', 'code'],
+				['add.wasm', 'AAAA'],
+			]);
+			expect(isTabSetDirty(pristine, current)).toBe(false);
+		});
+
+		it('is dirty when the script tab differs', () => {
+			const current = new Map([
+				['script', 'edited'],
+				['add.wasm', 'AAAA'],
+			]);
+			expect(isTabSetDirty(pristine, current)).toBe(true);
+		});
+
+		it('is dirty when a module tab differs, even if the script tab matches', () => {
+			const current = new Map([
+				['script', 'code'],
+				['add.wasm', 'BBBB'],
+			]);
+			expect(isTabSetDirty(pristine, current)).toBe(true);
+		});
+	});
+
+	describe('buildCustomRunPayload', () => {
+		it('omits modules entirely when there are none', () => {
+			const tabs = exampleTabs({ id: '1', title: 'x', description: 'd', suggestedUrls: [], source: 'code' });
+			const current = new Map([['script', 'edited code']]);
+			expect(buildCustomRunPayload(tabs, current)).toEqual({ customCode: 'edited code' });
+		});
+
+		it('includes modules with whitespace stripped from base64 text', () => {
+			const tabs = exampleTabs({
+				id: '1',
+				title: 'x',
+				description: 'd',
+				suggestedUrls: [],
+				source: 'code',
+				modules: [{ name: 'add.wasm', kind: 'wasm', base64: 'AAAA' }],
+			});
+			const current = new Map([
+				['script', 'edited code'],
+				['add.wasm', 'AA AA\nBB\t'],
+			]);
+			expect(buildCustomRunPayload(tabs, current)).toEqual({
+				customCode: 'edited code',
+				modules: [{ name: 'add.wasm', kind: 'wasm', base64: 'AAAABB' }],
+			});
 		});
 	});
 

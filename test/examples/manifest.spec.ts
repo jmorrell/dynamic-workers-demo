@@ -3,8 +3,8 @@ import { EXAMPLES, listExamples, getExample } from '../../src/examples/manifest'
 
 describe('manifest', () => {
 	describe('EXAMPLES', () => {
-		it('contains all five examples', () => {
-			expect(EXAMPLES).toHaveLength(5);
+		it('contains all six examples', () => {
+			expect(EXAMPLES).toHaveLength(6);
 		});
 
 		it('has required ids', () => {
@@ -14,6 +14,7 @@ describe('manifest', () => {
 			expect(ids).toContain('hackernews');
 			expect(ids).toContain('cpu-spin');
 			expect(ids).toContain('blocked-fetch');
+			expect(ids).toContain('wasm-add');
 		});
 
 		it('each example has non-empty code string', () => {
@@ -35,7 +36,7 @@ describe('manifest', () => {
 	describe('listExamples()', () => {
 		it('returns all examples without code field', () => {
 			const examples = listExamples();
-			expect(examples).toHaveLength(5);
+			expect(examples).toHaveLength(6);
 
 			for (const example of examples) {
 				expect('code' in example).toBe(false);
@@ -45,6 +46,18 @@ describe('manifest', () => {
 				expect(Array.isArray(example.suggestedUrls)).toBe(true);
 				expect(example.source).toBeTruthy();
 			}
+		});
+
+		it('includes the wasm-add example with its module base64', () => {
+			const examples = listExamples();
+			const wasmAdd = examples.find((e) => e.id === 'wasm-add');
+			expect(wasmAdd).toBeDefined();
+			expect(wasmAdd?.modules).toHaveLength(1);
+			expect(wasmAdd?.modules?.[0]).toEqual({
+				name: 'add.wasm',
+				kind: 'wasm',
+				base64: 'AGFzbQEAAAABBwFgAn9/AX8DAgEABwcBA2FkZAAACgkBBwAgACABags=',
+			});
 		});
 	});
 

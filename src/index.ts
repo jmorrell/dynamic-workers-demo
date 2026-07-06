@@ -2,7 +2,7 @@ import { fetchTarget } from './runtime/fetch-target';
 import { runInLoader } from './runtime/loader';
 import { transpileUserCode, selectReferencedDeps } from './runtime/transpile';
 import { extractLinkedUrls } from './runtime/extract-urls';
-import { isValidPermissions } from './runtime/core';
+import { isValidPermissions, validateCustomModules, decodeBase64 } from './runtime/core';
 import type { Permissions, RunErrorKind, RunRequestBody, UserWorker } from './runtime/types';
 import { listExamples, getExample } from './examples/manifest';
 import { SHARED_DEP_SPECIFIERS } from './examples/registry';
@@ -110,9 +110,14 @@ async function handleRun(request: Request, env: Env, ctx: ExecutionContext): Pro
 		return jsonError(400, 'bad_request', 'Missing required field: worker');
 	}
 
-	const { type: workerType, exampleId, customCode } = worker as Partial<{ type?: unknown } & Record<'exampleId' | 'customCode', unknown>>;
+	const { type: workerType, exampleId, customCode, modules: workerModules } = worker as Partial<
+		{ type?: unknown } & Record<'exampleId' | 'customCode', unknown> & Record<'modules', unknown>
+	>;
 
 	let userWorker: UserWorker;
+	// Only populated for a custom run whose request declares wasm modules
+	// (validated/decoded here so a bad request 400s before any fetch/loader work).
+	let requestWasmModules: Record<string, Uint8Array> | undefined;
 	if (workerType === 'example') {
 		if (typeof exampleId !== 'string') {
 			return jsonError(400, 'bad_request', 'exampleId must be a string');
@@ -121,6 +126,13 @@ async function handleRun(request: Request, env: Env, ctx: ExecutionContext): Pro
 	} else if (workerType === 'custom') {
 		if (typeof customCode !== 'string') {
 			return jsonError(400, 'bad_request', 'customCode must be a string');
+		}
+		if (workerModules !== undefined) {
+			const validated = validateCustomModules(workerModules);
+			if (!validated.ok) {
+				return jsonError(400, 'bad_request', validated.message);
+			}
+			requestWasmModules = validated.modules;
 		}
 		userWorker = { type: 'custom', customCode };
 	} else {
@@ -136,6 +148,10 @@ async function handleRun(request: Request, env: Env, ctx: ExecutionContext): Pro
 	// imports need, since a pristine example's deps are already baked into
 	// example.code by the build (scripts/build-examples.mjs).
 	let extraModules: Record<string, string> | undefined;
+	// Wasm modules to inject alongside the code (see src/runtime/loader.ts
+	// wasmModules) — from the example's manifest for example runs, or from the
+	// validated request for custom runs (requestWasmModules, decoded above).
+	let wasmModules: Record<string, Uint8Array> | undefined;
 	// Effective capability grant. For examples, the registered permissions win
 	// (request-supplied ones are ignored). For custom runs, the request supplies
 	// them (validated below). Absent → default no-network grant in the loader.
@@ -151,6 +167,16 @@ async function handleRun(request: Request, env: Env, ctx: ExecutionContext): Pro
 		compatDate = example.compatDate;
 		// The example's registered permissions win; request-supplied ones are ignored.
 		permissions = example.permissions;
+		// The bundled example code retains its relative wasm import (e.g.
+		// './add.wasm' — see scripts/build-examples.mjs external:['*.wasm']), so an
+		// example run needs the same module injection a custom run would.
+		if (example.modules?.length) {
+			wasmModules = {};
+			for (const m of example.modules) {
+				const bytes = decodeBase64(m.base64);
+				if (bytes) wasmModules[m.name] = bytes;
+			}
+		}
 	} else {
 		// Custom runs may declare their own permissions; reject a malformed shape.
 		if (requestPermissions !== undefined) {
@@ -186,6 +212,8 @@ async function handleRun(request: Request, env: Env, ctx: ExecutionContext): Pro
 				extraModules[dep.specifier] = (GENERATED_DEP_MODULES as Record<string, string>)[dep.specifier];
 			}
 		}
+
+		wasmModules = requestWasmModules;
 	}
 
 	// Fetch target URL
@@ -222,7 +250,13 @@ async function handleRun(request: Request, env: Env, ctx: ExecutionContext): Pro
 
 	// Run code in loader
 	const startTime = performance.now();
-	const result = await runInLoader(env, fetchOutcome.input, code, runId, ctx, { compatDate, extraModules, permissions, allowedUrls });
+	const result = await runInLoader(env, fetchOutcome.input, code, runId, ctx, {
+		compatDate,
+		extraModules,
+		wasmModules,
+		permissions,
+		allowedUrls,
+	});
 	const timingMs = Math.round(performance.now() - startTime);
 
 	// Read logs from LogSession

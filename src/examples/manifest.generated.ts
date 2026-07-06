@@ -50,4 +50,21 @@ export const GENERATED_MANIFEST = [
 		code: '// src/examples/blocked-fetch.ts\nasync function transform(env, input) {\n  const res = await fetch("https://example.com/should-be-blocked");\n  return { status: res.status, from: input.url };\n}\nexport {\n  transform as default\n};\n',
 		compatDate: '2026-06-22',
 	},
+	{
+		id: 'wasm-add',
+		title: 'WebAssembly (out of the box)',
+		description: 'The sandbox loads WebAssembly modules natively — no runtime compilation needed.',
+		suggestedUrls: ['https://example.com'],
+		source:
+			"// NOTE: Example payload (untrusted code). Not application code — executed via the loader.\n\n// The sandbox loads WebAssembly modules natively. `./add.wasm` is the module in\n// the add.wasm tab of this editor — 41 bytes of real wasm. Its source (WAT):\n//\n//   (module\n//     (func (export \"add\") (param i32 i32) (result i32)\n//       local.get 0\n//       local.get 1\n//       i32.add))\n//\nimport addModule from './add.wasm';\nimport type { RunInput, TransformEnv } from '../runtime/types';\n\nexport default async function transform(env: TransformEnv, input: RunInput): Promise<unknown> {\n\tconst { exports } = await WebAssembly.instantiate(addModule);\n\tconst add = exports.add as (a: number, b: number) => number;\n\tconst a = Math.floor(Math.random() * 1000);\n\tconst b = input.body.length;\n\treturn { a, b, 'a + b (computed in wasm)': add(a, b) };\n}\n",
+		code: '// src/examples/wasm-add.ts\nimport addModule from "./add.wasm";\nasync function transform(env, input) {\n  const { exports } = await WebAssembly.instantiate(addModule);\n  const add = exports.add;\n  const a = Math.floor(Math.random() * 1e3);\n  const b = input.body.length;\n  return { a, b, "a + b (computed in wasm)": add(a, b) };\n}\nexport {\n  transform as default\n};\n',
+		compatDate: '2026-06-22',
+		modules: [
+			{
+				name: 'add.wasm',
+				kind: 'wasm',
+				base64: 'AGFzbQEAAAABBwFgAn9/AX8DAgEABwcBA2FkZAAACgkBBwAgACABags=',
+			},
+		],
+	},
 ] as const;

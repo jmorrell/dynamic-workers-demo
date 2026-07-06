@@ -34,7 +34,7 @@ describe('GET /api/examples handler', () => {
 
 		const data = await response.json<Array<{ id: string; title: string; description: string }>>();
 		expect(Array.isArray(data)).toBe(true);
-		expect(data.length).toBe(5);
+		expect(data.length).toBe(6);
 
 		// Should not contain code field
 		for (const example of data) {
@@ -483,6 +483,131 @@ describe('POST /api/run handler', () => {
 			const ctx = createExecutionContext();
 			const response = await worker.fetch(request, env, ctx);
 			await waitOnExecutionContext(ctx);
+			expect(response.status).toBe(400);
+		});
+	});
+
+	describe('wasm modules', () => {
+		// 41-byte wasm binary exporting add(i32,i32)->i32 — see AGENTS.md/task spec.
+		const ADD_WASM_BASE64 = 'AGFzbQEAAAABBwFgAn9/AX8DAgEABwcBA2FkZAAACgkBBwAgACABags=';
+
+		afterEach(() => {
+			vi.unstubAllGlobals();
+		});
+
+		it('POST /api/run { type: "example", exampleId: "wasm-add" } succeeds and computes a + b in wasm', async () => {
+			stubTargetFetch('<html>hello world</html>');
+
+			const request = new IncomingRequest('http://example.com/api/run', {
+				method: 'POST',
+				headers: { 'CF-Connecting-IP': '203.0.113.230' },
+				body: JSON.stringify({
+					worker: { type: 'example', exampleId: 'wasm-add' },
+					url: 'http://example.com/test',
+				}),
+			});
+			const ctx = createExecutionContext();
+			const response = await worker.fetch(request, env, ctx);
+			await waitOnExecutionContext(ctx);
+
+			expect(response.status).toBe(200);
+			const data = await response.json<{
+				ok: boolean;
+				result?: { a: number; b: number; 'a + b (computed in wasm)': number };
+			}>();
+			expect(data.ok).toBe(true);
+			expect(data.result).toBeDefined();
+			if (data.result) {
+				expect(data.result['a + b (computed in wasm)']).toBe(data.result.a + data.result.b);
+			}
+		});
+
+		it('POST custom run with script + modules payload succeeds end-to-end', async () => {
+			stubTargetFetch('<html>hi</html>');
+
+			const customCode = `import addModule from './add.wasm';
+export default async (env, input) => {
+	const { exports } = await WebAssembly.instantiate(addModule);
+	return exports.add(2, 3);
+};`;
+
+			const request = new IncomingRequest('http://example.com/api/run', {
+				method: 'POST',
+				headers: { 'CF-Connecting-IP': '203.0.113.231' },
+				body: JSON.stringify({
+					worker: { type: 'custom', customCode, modules: [{ name: 'add.wasm', kind: 'wasm', base64: ADD_WASM_BASE64 }] },
+					url: 'http://example.com/test',
+				}),
+			});
+			const ctx = createExecutionContext();
+			const response = await worker.fetch(request, env, ctx);
+			await waitOnExecutionContext(ctx);
+
+			expect(response.status).toBe(200);
+			const data = await response.json<{ ok: boolean; result?: number }>();
+			expect(data.ok).toBe(true);
+			expect(data.result).toBe(5);
+		});
+
+		it('rejects invalid base64 with 400 bad_request', async () => {
+			const request = new IncomingRequest('http://example.com/api/run', {
+				method: 'POST',
+				headers: { 'CF-Connecting-IP': '203.0.113.232' },
+				body: JSON.stringify({
+					worker: {
+						type: 'custom',
+						customCode: 'export default () => 1',
+						modules: [{ name: 'add.wasm', kind: 'wasm', base64: '!!!not base64!!!' }],
+					},
+					url: 'http://example.com/test',
+				}),
+			});
+			const ctx = createExecutionContext();
+			const response = await worker.fetch(request, env, ctx);
+			await waitOnExecutionContext(ctx);
+
+			expect(response.status).toBe(400);
+		});
+
+		it('rejects an oversized module with 400 bad_request', async () => {
+			// 9 MiB of zero bytes, base64-encoded — over the 8 MiB per-module cap.
+			const oversized = new Uint8Array(9 * 1024 * 1024);
+			let binary = '';
+			for (const byte of oversized) binary += String.fromCharCode(byte);
+			const base64 = btoa(binary);
+
+			const request = new IncomingRequest('http://example.com/api/run', {
+				method: 'POST',
+				headers: { 'CF-Connecting-IP': '203.0.113.233' },
+				body: JSON.stringify({
+					worker: { type: 'custom', customCode: 'export default () => 1', modules: [{ name: 'add.wasm', kind: 'wasm', base64 }] },
+					url: 'http://example.com/test',
+				}),
+			});
+			const ctx = createExecutionContext();
+			const response = await worker.fetch(request, env, ctx);
+			await waitOnExecutionContext(ctx);
+
+			expect(response.status).toBe(400);
+		});
+
+		it('rejects a bad module name with 400 bad_request', async () => {
+			const request = new IncomingRequest('http://example.com/api/run', {
+				method: 'POST',
+				headers: { 'CF-Connecting-IP': '203.0.113.234' },
+				body: JSON.stringify({
+					worker: {
+						type: 'custom',
+						customCode: 'export default () => 1',
+						modules: [{ name: 'user.js', kind: 'wasm', base64: ADD_WASM_BASE64 }],
+					},
+					url: 'http://example.com/test',
+				}),
+			});
+			const ctx = createExecutionContext();
+			const response = await worker.fetch(request, env, ctx);
+			await waitOnExecutionContext(ctx);
+
 			expect(response.status).toBe(400);
 		});
 	});

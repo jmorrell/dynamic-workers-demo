@@ -112,6 +112,36 @@
 				font-weight: 400;
 			}
 
+			#editor-tabs {
+				display: none;
+				gap: 4px;
+				margin-bottom: -1px;
+				position: relative;
+				z-index: 1;
+			}
+
+			.editor-tab {
+				padding: 6px 12px;
+				background: #e0e0e0;
+				border: 1px solid #999;
+				border-bottom: none;
+				border-radius: 4px 4px 0 0;
+				cursor: pointer;
+				font-size: 12px;
+				font-weight: 400;
+				color: #333;
+			}
+
+			.editor-tab:hover {
+				background: #d0d0d0;
+			}
+
+			.editor-tab.active {
+				background: white;
+				color: #0066cc;
+				font-weight: 600;
+			}
+
 			button {
 				padding: 10px 16px;
 				background: #0066cc;
@@ -238,6 +268,7 @@
 				<button type="button" id="editor-reset">Reset</button>
 			</div>
 			<div id="editor-perms"></div>
+			<div id="editor-tabs"></div>
 			<div id="editor"></div>
 		</section>
 

@@ -23,6 +23,65 @@ export function isValidPermissions(value: unknown): value is Permissions {
 	return true;
 }
 
+/** Hard bounds for a custom run's declared wasm modules. */
+export const MAX_CUSTOM_MODULES = 4;
+export const MAX_MODULE_BYTES = 8 * 1024 * 1024; // 8 MiB
+const CUSTOM_MODULE_NAME_RE = /^[A-Za-z0-9._-]+\.wasm$/;
+
+/**
+ * Decodes a base64 string to bytes, or null if it isn't valid base64. Pure
+ * wrapper around the standard atob (available in the Workers runtime).
+ */
+export function decodeBase64(base64: string): Uint8Array | null {
+	try {
+		const binary = atob(base64);
+		const bytes = new Uint8Array(binary.length);
+		for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+		return bytes;
+	} catch {
+		return null;
+	}
+}
+
+/**
+ * Validates and decodes a custom run's `worker.modules` field (untrusted
+ * request input): at most `MAX_CUSTOM_MODULES` entries, each with a `.wasm`
+ * name (not shadowing `harness.js`/`user.js`) matching `CUSTOM_MODULE_NAME_RE`,
+ * valid base64, decoding to at most `MAX_MODULE_BYTES`. Returns the decoded
+ * bytes keyed by module name, or a human-readable rejection reason.
+ */
+export function validateCustomModules(value: unknown): { ok: true; modules: Record<string, Uint8Array> } | { ok: false; message: string } {
+	if (!Array.isArray(value)) return { ok: false, message: 'modules must be an array' };
+	if (value.length > MAX_CUSTOM_MODULES) return { ok: false, message: `modules must contain at most ${MAX_CUSTOM_MODULES} entries` };
+
+	const modules: Record<string, Uint8Array> = {};
+	for (const entry of value) {
+		if (typeof entry !== 'object' || entry === null) return { ok: false, message: 'each module must be an object' };
+		const { name, kind, base64 } = entry as Record<string, unknown>;
+
+		if (typeof name !== 'string' || !CUSTOM_MODULE_NAME_RE.test(name)) {
+			return { ok: false, message: `invalid module name: ${String(name)}` };
+		}
+		if (name === 'harness.js' || name === 'user.js') {
+			return { ok: false, message: `module name may not be "${name}"` };
+		}
+		if (kind !== 'wasm') {
+			return { ok: false, message: `unsupported module kind: ${String(kind)}` };
+		}
+		if (typeof base64 !== 'string') {
+			return { ok: false, message: `module "${name}" is missing base64 content` };
+		}
+
+		const bytes = decodeBase64(base64);
+		if (!bytes) return { ok: false, message: `module "${name}" has invalid base64 content` };
+		if (bytes.byteLength > MAX_MODULE_BYTES) return { ok: false, message: `module "${name}" exceeds the ${MAX_MODULE_BYTES}-byte cap` };
+
+		modules[name] = bytes;
+	}
+
+	return { ok: true, modules };
+}
+
 /**
  * SSRF guard for outbound fetch targets (the target page fetch and every
  * CapabilityGate fetch). Rejects non-http(s) schemes and hostnames that are
