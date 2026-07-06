@@ -30,10 +30,9 @@ library, and an embeddable widget.
 - `scripts/` - esbuild build scripts (`build-examples.mjs`, `build-frontend.mjs`)
 
 ## Conventions
-- Functional Core / Imperative Shell: every `src/` module starts with a
-  `// pattern: Functional Core` or `// pattern: Imperative Shell` marker comment.
-- Pure logic (hashing, truncation, error classification, render formatting) lives
-  in Functional Core files; I/O and bindings live in Imperative Shell files.
+- Functional Core / Imperative Shell: pure logic (hashing, truncation, error
+  classification, render formatting) is kept separate from I/O and bindings,
+  without marker comments.
 
 ## Generated artifacts (committed, do not hand-edit)
 - `src/examples/manifest.generated.ts` - from `scripts/build-examples.mjs` (single
@@ -52,9 +51,11 @@ deploy-verified only:
   (set in `.dev.vars`, so only during `wrangler dev`). Deploy uses `ENVIRONMENT=production`
   from wrangler.jsonc vars and enforces the gate. vitest pins `ENVIRONMENT=test` so gate
   tests stay valid.
-- `LOADER_COMPAT_DATE` (prod `2026-06-22`) is overridden to a loadable date in
-  `vitest.config.mts` because local workerd hard-errors loading future-dated
-  Dynamic Workers.
+- Dynamic Worker compat dates are hard-coded in source (`DEFAULT_COMPAT_DATE` in
+  `src/runtime/loader.ts`; per-example `compatDate` in `src/examples/registry.ts`),
+  not read from a wrangler var. `LOADER_COMPAT_DATE` only exists as a test-only
+  override (set in `vitest.config.mts`, active when `ENVIRONMENT=test`) because
+  local workerd hard-errors loading future-dated Dynamic Workers.
 
 # Cloudflare Workers
 

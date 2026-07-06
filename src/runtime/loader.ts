@@ -1,5 +1,3 @@
-// pattern: Imperative Shell
-
 import { classifyLoaderError, hashCode } from './core';
 import type { RunInput, RunResult } from './types';
 import { HARNESS_SOURCE } from './harness-source';
@@ -7,12 +5,11 @@ import { HARNESS_SOURCE } from './harness-source';
 /** CPU limit for sandboxed worker code execution (in milliseconds) */
 export const CPU_LIMIT_MS = 50;
 
-// The Dynamic Worker's compatibility date comes from the LOADER_COMPAT_DATE
-// var (wrangler.jsonc), which mirrors the host's compat date so loaded code
-// runs against the same runtime APIs and the globalOutbound: null block error
-// text stays consistent. Production uses 2026-06-22; the vitest config
-// overrides the var to a date the local workerd binary can load (it hard-errors
-// on future dates for loaded workers, unlike the host which falls back).
+// Default compatibility date for Dynamic Workers running arbitrary (non-example)
+// code. Mirrors wrangler.jsonc's compatibility_date. Saved examples pin their own
+// compatDate (see src/examples/registry.ts) so bumping this default doesn't
+// silently change the runtime behavior of already-verified examples.
+export const DEFAULT_COMPAT_DATE = '2026-06-22';
 
 /**
  * Runs untrusted code against a URL in a sandboxed dynamic worker.
@@ -25,15 +22,28 @@ export const CPU_LIMIT_MS = 50;
  *
  * The harness handles transform-level failures and always returns structured result.
  */
-export async function runInLoader(env: Env, input: RunInput, code: string, runId?: string, ctx?: ExecutionContext): Promise<RunResult> {
+export async function runInLoader(
+	env: Env,
+	input: RunInput,
+	code: string,
+	runId: string,
+	ctx: ExecutionContext,
+	compatDate: string = DEFAULT_COMPAT_DATE,
+): Promise<RunResult> {
 	try {
 		// 1. Hash the code for cache key (identical code → same isolate)
 		const id = await hashCode(code);
 
 		// 2. Get or create the worker via the loader
 		const worker = env.LOADER.get(id, async () => {
+			// LOADER_COMPAT_DATE is a test-only override (set in vitest.config.mts):
+			// the local workerd binary hard-errors loading a Dynamic Worker dated
+			// past its supported compat date, so tests pin an older, loadable date
+			// regardless of what compatDate the caller resolved for production.
+			const compatibilityDate = env.ENVIRONMENT === 'test' && env.LOADER_COMPAT_DATE ? env.LOADER_COMPAT_DATE : compatDate;
+
 			const workerCode: WorkerLoaderWorkerCode = {
-				compatibilityDate: env.LOADER_COMPAT_DATE,
+				compatibilityDate,
 				compatibilityFlags: ['nodejs_compat'],
 				mainModule: 'harness.js',
 				modules: {
@@ -51,12 +61,9 @@ export async function runInLoader(env: Env, input: RunInput, code: string, runId
 				},
 			};
 
-			// Attach tail worker if runId and ctx are provided
-			if (runId && ctx) {
-				// ctx.exports is typed {} until GlobalProps is generated; narrow the loopback binding.
-				const exports = ctx.exports as { LogTailer: (o: { props: { runId: string } }) => Fetcher };
-				workerCode.tails = [exports.LogTailer({ props: { runId } })];
-			}
+			// ctx.exports is typed {} until GlobalProps is generated; narrow the loopback binding.
+			const exports = ctx.exports as { LogTailer: (o: { props: { runId: string } }) => Fetcher };
+			workerCode.tails = [exports.LogTailer({ props: { runId } })];
 
 			return workerCode;
 		});

@@ -10,6 +10,10 @@
 	"compatibility_flags": ["nodejs_compat"],
 	"worker_loaders": [{ "binding": "LOADER" }],
 	"vars": {
+		// Inert in production (Dynamic Worker compat dates are hard-coded in
+		// src/runtime/loader.ts / src/examples/registry.ts). Declared here only so
+		// vitest.config.mts's test-only override has a typed binding to widen; see
+		// src/runtime/loader.ts.
 		"LOADER_COMPAT_DATE": "2026-06-22",
 		"TURNSTILE_SITEKEY": "1x00000000000000000000AA",
 		// "production" on deploy; overridden to "development" via .dev.vars during

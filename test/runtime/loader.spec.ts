@@ -1,11 +1,12 @@
 import { describe, it, expect, beforeEach } from 'vitest';
-import { env } from 'cloudflare:test';
+import { env, createExecutionContext } from 'cloudflare:test';
 import { runInLoader } from '../../src/runtime/loader';
 import { classifyTransformError } from '../../src/runtime/core';
 import type { RunInput } from '../../src/runtime/types';
 
 describe('runInLoader', () => {
 	let testInput: RunInput;
+	let ctx: ExecutionContext;
 
 	beforeEach(() => {
 		testInput = {
@@ -16,13 +17,14 @@ describe('runInLoader', () => {
 			body: '<html>Test page</html>',
 			truncated: false,
 		};
+		ctx = createExecutionContext();
 	});
 
 	describe('AC1.1 / AC1.3: Transform execution and roundtrip', () => {
 		it('executes sync transform and returns value', async () => {
 			const code = 'export default (input) => input.status';
 
-			const result = await runInLoader(env, testInput, code);
+			const result = await runInLoader(env, testInput, code, crypto.randomUUID(), ctx);
 
 			expect(result.ok).toBe(true);
 			if (result.ok) {
@@ -33,7 +35,7 @@ describe('runInLoader', () => {
 		it('executes async transform and returns value', async () => {
 			const code = 'export default async (input) => { return Promise.resolve(input.status); }';
 
-			const result = await runInLoader(env, testInput, code);
+			const result = await runInLoader(env, testInput, code, crypto.randomUUID(), ctx);
 
 			expect(result.ok).toBe(true);
 			if (result.ok) {
@@ -48,7 +50,7 @@ describe('runInLoader', () => {
         contentType: input.contentType
       })`;
 
-			const result = await runInLoader(env, testInput, code);
+			const result = await runInLoader(env, testInput, code, crypto.randomUUID(), ctx);
 
 			expect(result.ok).toBe(true);
 			if (result.ok) {
@@ -67,7 +69,7 @@ describe('runInLoader', () => {
         input.truncated
       ]`;
 
-			const result = await runInLoader(env, testInput, code);
+			const result = await runInLoader(env, testInput, code, crypto.randomUUID(), ctx);
 
 			expect(result.ok).toBe(true);
 			if (result.ok) {
@@ -78,7 +80,7 @@ describe('runInLoader', () => {
 		it('roundtrips string in result.value', async () => {
 			const code = 'export default (input) => "Hello: " + input.contentType';
 
-			const result = await runInLoader(env, testInput, code);
+			const result = await runInLoader(env, testInput, code, crypto.randomUUID(), ctx);
 
 			expect(result.ok).toBe(true);
 			if (result.ok) {
@@ -89,7 +91,7 @@ describe('runInLoader', () => {
 		it('roundtrips null value', async () => {
 			const code = 'export default (input) => null';
 
-			const result = await runInLoader(env, testInput, code);
+			const result = await runInLoader(env, testInput, code, crypto.randomUUID(), ctx);
 
 			expect(result.ok).toBe(true);
 			if (result.ok) {
@@ -100,7 +102,7 @@ describe('runInLoader', () => {
 		it('roundtrips boolean value', async () => {
 			const code = 'export default (input) => input.truncated';
 
-			const result = await runInLoader(env, testInput, code);
+			const result = await runInLoader(env, testInput, code, crypto.randomUUID(), ctx);
 
 			expect(result.ok).toBe(true);
 			if (result.ok) {
@@ -113,7 +115,7 @@ describe('runInLoader', () => {
 		it('returns transform_threw when sync transform throws', async () => {
 			const code = 'export default (input) => { throw new Error("Custom error"); }';
 
-			const result = await runInLoader(env, testInput, code);
+			const result = await runInLoader(env, testInput, code, crypto.randomUUID(), ctx);
 
 			expect(result.ok).toBe(false);
 			if (!result.ok) {
@@ -127,7 +129,7 @@ describe('runInLoader', () => {
         throw new Error("Async error");
       }`;
 
-			const result = await runInLoader(env, testInput, code);
+			const result = await runInLoader(env, testInput, code, crypto.randomUUID(), ctx);
 
 			expect(result.ok).toBe(false);
 			if (!result.ok) {
@@ -140,7 +142,7 @@ describe('runInLoader', () => {
 			const code = 'export default () => { throw new Error("Fatal"); }';
 
 			// This should not throw; it should return structured error
-			const result = await runInLoader(env, testInput, code);
+			const result = await runInLoader(env, testInput, code, crypto.randomUUID(), ctx);
 
 			expect(result.ok).toBe(false);
 			if (!result.ok) {
@@ -151,7 +153,7 @@ describe('runInLoader', () => {
 		it('captures error message for non-Error throws', async () => {
 			const code = 'export default () => { throw "string error"; }';
 
-			const result = await runInLoader(env, testInput, code);
+			const result = await runInLoader(env, testInput, code, crypto.randomUUID(), ctx);
 
 			expect(result.ok).toBe(false);
 			if (!result.ok) {
@@ -171,7 +173,7 @@ describe('runInLoader', () => {
         }
       }`;
 
-			const result = await runInLoader(env, testInput, code);
+			const result = await runInLoader(env, testInput, code, crypto.randomUUID(), ctx);
 
 			expect(result.ok).toBe(false);
 			if (!result.ok) {
@@ -191,7 +193,7 @@ describe('runInLoader', () => {
         }
       }`;
 
-			const result = await runInLoader(env, testInput, code);
+			const result = await runInLoader(env, testInput, code, crypto.randomUUID(), ctx);
 
 			expect(result.ok).toBe(false);
 			if (!result.ok) {
@@ -212,7 +214,7 @@ describe('runInLoader', () => {
         return typeof globalThis.someHostValue;
       }`;
 
-			const result = await runInLoader(env, testInput, code);
+			const result = await runInLoader(env, testInput, code, crypto.randomUUID(), ctx);
 
 			expect(result.ok).toBe(true);
 			if (result.ok) {
@@ -228,7 +230,7 @@ describe('runInLoader', () => {
         return Object.keys(input || {});
       }`;
 
-			const result = await runInLoader(env, testInput, code);
+			const result = await runInLoader(env, testInput, code, crypto.randomUUID(), ctx);
 
 			expect(result.ok).toBe(true);
 			if (result.ok) {
@@ -262,7 +264,7 @@ describe('runInLoader', () => {
         return { hasAllRequired, keyCount: keys.length };
       }`;
 
-			const result = await runInLoader(env, testInput, code);
+			const result = await runInLoader(env, testInput, code, crypto.randomUUID(), ctx);
 
 			expect(result.ok).toBe(true);
 			if (result.ok) {
@@ -280,7 +282,7 @@ describe('runInLoader', () => {
 			// produces the same result as the canonical version in core.ts
 			const code = 'export default () => { throw new Error("Regular error"); }';
 
-			const result = await runInLoader(env, testInput, code);
+			const result = await runInLoader(env, testInput, code, crypto.randomUUID(), ctx);
 
 			expect(result.ok).toBe(false);
 			if (!result.ok) {
@@ -302,7 +304,7 @@ describe('runInLoader', () => {
         }
       }`;
 
-			const result = await runInLoader(env, testInput, code);
+			const result = await runInLoader(env, testInput, code, crypto.randomUUID(), ctx);
 
 			expect(result.ok).toBe(false);
 			if (!result.ok) {
@@ -325,7 +327,7 @@ describe('runInLoader', () => {
 		it('finds and imports user module from ./user.js', async () => {
 			const code = 'export default (input) => "module loaded successfully"';
 
-			const result = await runInLoader(env, testInput, code);
+			const result = await runInLoader(env, testInput, code, crypto.randomUUID(), ctx);
 
 			expect(result.ok).toBe(true);
 			if (result.ok) {
@@ -345,7 +347,7 @@ describe('runInLoader', () => {
         };
       }`;
 
-			const result = await runInLoader(env, testInput, code);
+			const result = await runInLoader(env, testInput, code, crypto.randomUUID(), ctx);
 
 			expect(result.ok).toBe(true);
 			if (result.ok) {
@@ -364,8 +366,8 @@ describe('runInLoader', () => {
 			// be delivered per invocation (not baked into the cached worker env), or a
 			// second run of identical code returns the first run's stale input/result.
 			const code = 'export default (input) => input.url';
-			const first = await runInLoader(env, { ...testInput, url: 'https://first.example' }, code);
-			const second = await runInLoader(env, { ...testInput, url: 'https://second.example' }, code);
+			const first = await runInLoader(env, { ...testInput, url: 'https://first.example' }, code, crypto.randomUUID(), ctx);
+			const second = await runInLoader(env, { ...testInput, url: 'https://second.example' }, code, crypto.randomUUID(), ctx);
 
 			expect(first.ok).toBe(true);
 			expect(second.ok).toBe(true);
@@ -378,7 +380,7 @@ describe('runInLoader', () => {
 		it('handles module with no default export', async () => {
 			const code = 'export const foo = 42;';
 
-			const result = await runInLoader(env, testInput, code);
+			const result = await runInLoader(env, testInput, code, crypto.randomUUID(), ctx);
 
 			expect(result.ok).toBe(false);
 			if (!result.ok) {
@@ -390,7 +392,7 @@ describe('runInLoader', () => {
 		it('handles module that exports non-function default', async () => {
 			const code = 'export default 42;';
 
-			const result = await runInLoader(env, testInput, code);
+			const result = await runInLoader(env, testInput, code, crypto.randomUUID(), ctx);
 
 			expect(result.ok).toBe(false);
 			if (!result.ok) {
@@ -401,7 +403,7 @@ describe('runInLoader', () => {
 		it('handles transform that returns undefined', async () => {
 			const code = 'export default (input) => undefined';
 
-			const result = await runInLoader(env, testInput, code);
+			const result = await runInLoader(env, testInput, code, crypto.randomUUID(), ctx);
 
 			expect(result.ok).toBe(true);
 			if (result.ok) {
@@ -412,7 +414,7 @@ describe('runInLoader', () => {
 		it('handles transform that returns 0', async () => {
 			const code = 'export default (input) => 0';
 
-			const result = await runInLoader(env, testInput, code);
+			const result = await runInLoader(env, testInput, code, crypto.randomUUID(), ctx);
 
 			expect(result.ok).toBe(true);
 			if (result.ok) {
@@ -423,7 +425,7 @@ describe('runInLoader', () => {
 		it('handles transform that returns empty string', async () => {
 			const code = 'export default (input) => ""';
 
-			const result = await runInLoader(env, testInput, code);
+			const result = await runInLoader(env, testInput, code, crypto.randomUUID(), ctx);
 
 			expect(result.ok).toBe(true);
 			if (result.ok) {
@@ -434,7 +436,7 @@ describe('runInLoader', () => {
 		it('handles transform that returns empty array', async () => {
 			const code = 'export default (input) => []';
 
-			const result = await runInLoader(env, testInput, code);
+			const result = await runInLoader(env, testInput, code, crypto.randomUUID(), ctx);
 
 			expect(result.ok).toBe(true);
 			if (result.ok) {
@@ -446,7 +448,7 @@ describe('runInLoader', () => {
 		it('handles transform that returns empty object', async () => {
 			const code = 'export default (input) => ({})';
 
-			const result = await runInLoader(env, testInput, code);
+			const result = await runInLoader(env, testInput, code, crypto.randomUUID(), ctx);
 
 			expect(result.ok).toBe(true);
 			if (result.ok) {
@@ -461,10 +463,10 @@ describe('runInLoader', () => {
 			const code = 'export default (input) => input.status';
 
 			// First call
-			const result1 = await runInLoader(env, testInput, code);
+			const result1 = await runInLoader(env, testInput, code, crypto.randomUUID(), ctx);
 
 			// Second call with same code
-			const result2 = await runInLoader(env, testInput, code);
+			const result2 = await runInLoader(env, testInput, code, crypto.randomUUID(), ctx);
 
 			// Both should succeed and return same value
 			expect(result1.ok).toBe(true);
@@ -479,8 +481,8 @@ describe('runInLoader', () => {
 			const code1 = 'export default (input) => 1';
 			const code2 = 'export default (input) => 2';
 
-			const result1 = await runInLoader(env, testInput, code1);
-			const result2 = await runInLoader(env, testInput, code2);
+			const result1 = await runInLoader(env, testInput, code1, crypto.randomUUID(), ctx);
+			const result2 = await runInLoader(env, testInput, code2, crypto.randomUUID(), ctx);
 
 			expect(result1.ok).toBe(true);
 			expect(result2.ok).toBe(true);

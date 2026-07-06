@@ -1,5 +1,3 @@
-// pattern: Imperative Shell
-
 import { truncateBody } from './core';
 import type { FetchOutcome, RunInput } from './types';
 

@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach } from 'vitest';
-import { env } from 'cloudflare:test';
+import { env, createExecutionContext } from 'cloudflare:test';
 import { runInLoader } from '../../src/runtime/loader';
 import type { RunInput } from '../../src/runtime/types';
 import type { LogLine } from '../../src/runtime/log-types';
@@ -23,6 +23,7 @@ import type { LogLine } from '../../src/runtime/log-types';
  */
 describe('Log capture and forwarding (AC3)', () => {
 	let testInput: RunInput;
+	let ctx: ExecutionContext;
 
 	beforeEach(() => {
 		testInput = {
@@ -33,6 +34,7 @@ describe('Log capture and forwarding (AC3)', () => {
 			body: '<html>Test page</html>',
 			truncated: false,
 		};
+		ctx = createExecutionContext();
 	});
 
 	describe('AC3.4: Silent transforms return empty logs without error', () => {
@@ -46,7 +48,7 @@ describe('Log capture and forwarding (AC3)', () => {
       `;
 
 			// Transform should succeed
-			const result = await runInLoader(env, testInput, code, runId);
+			const result = await runInLoader(env, testInput, code, runId, ctx);
 			expect(result.ok).toBe(true);
 			if (result.ok) {
 				expect(result.value).toBe('result');
@@ -70,7 +72,7 @@ describe('Log capture and forwarding (AC3)', () => {
         }
       `;
 
-			const result = await runInLoader(env, testInput, code, runId);
+			const result = await runInLoader(env, testInput, code, runId, ctx);
 			expect(result.ok).toBe(true);
 
 			const logsStub = env.LOG_SESSION.get(env.LOG_SESSION.idFromName(runId));
@@ -128,10 +130,10 @@ describe('Log capture and forwarding (AC3)', () => {
 	});
 
 	describe('AC3.1 & AC3.2: Tail delivery (DEPLOY-VERIFIED)', () => {
-		it('runInLoader accepts optional runId and ctx parameters', async () => {
-			// Verify the integration point is in place: runInLoader accepts runId and ctx.
-			// This is the mechanism that would attach the LogTailer tail worker.
-			// Actual tail delivery is not available in local vitest (see note above).
+		it('runInLoader attaches the tail worker via runId and ctx', async () => {
+			// Verify the integration point is in place: runInLoader always attaches
+			// the LogTailer tail worker via runId/ctx. Actual tail delivery is not
+			// available in local vitest (see note above).
 			const runId = `test-integration-${Date.now()}-${Math.random()}`;
 			const code = `
         export default (input) => {
@@ -140,13 +142,8 @@ describe('Log capture and forwarding (AC3)', () => {
         }
       `;
 
-			// Should not error - runId is optional
-			const result1 = await runInLoader(env, testInput, code, runId);
-			expect(result1.ok).toBe(true);
-
-			// Should not error - no runId or ctx
-			const result2 = await runInLoader(env, testInput, code);
-			expect(result2.ok).toBe(true);
+			const result = await runInLoader(env, testInput, code, runId, ctx);
+			expect(result.ok).toBe(true);
 		});
 
 		it('LogSession.getLogs returns valid LogBundle structure', async () => {

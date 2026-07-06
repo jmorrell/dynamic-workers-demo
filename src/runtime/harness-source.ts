@@ -1,5 +1,3 @@
-// pattern: Functional Core
-
 /**
  * HARNESS_SOURCE is the harness module as a string that will be compiled
  * inside the loaded worker. It inlines classifyTransformError logic (identical

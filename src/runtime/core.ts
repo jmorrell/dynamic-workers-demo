@@ -1,5 +1,3 @@
-// pattern: Functional Core
-
 import type { RunErrorKind } from './types';
 
 /**

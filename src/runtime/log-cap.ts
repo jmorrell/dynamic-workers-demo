@@ -1,5 +1,3 @@
-// pattern: Functional Core
-
 import type { LogLine, LogBundle } from './log-types';
 
 /**

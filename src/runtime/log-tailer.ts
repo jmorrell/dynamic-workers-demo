@@ -1,5 +1,3 @@
-// pattern: Imperative Shell
-
 import { WorkerEntrypoint } from 'cloudflare:workers';
 import type { LogLine } from './log-types';
 

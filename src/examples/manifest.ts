@@ -1,5 +1,3 @@
-// pattern: Functional Core
-
 import { GENERATED_MANIFEST } from './manifest.generated';
 
 export type Example = {
@@ -9,12 +7,13 @@ export type Example = {
 	readonly suggestedUrls: ReadonlyArray<string>;
 	readonly source: string;
 	readonly code: string;
+	readonly compatDate: string;
 };
 
 export const EXAMPLES: ReadonlyArray<Example> = GENERATED_MANIFEST as unknown as ReadonlyArray<Example>;
 
-export function listExamples(): ReadonlyArray<Omit<Example, 'code'>> {
-	return EXAMPLES.map(({ code, ...rest }) => rest);
+export function listExamples(): ReadonlyArray<Omit<Example, 'code' | 'compatDate'>> {
+	return EXAMPLES.map(({ code, compatDate, ...rest }) => rest);
 }
 
 export function getExample(id: string): Example | undefined {

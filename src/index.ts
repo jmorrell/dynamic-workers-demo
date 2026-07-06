@@ -107,6 +107,9 @@ async function handleRun(request: Request, env: Env, ctx: ExecutionContext): Pro
 
 	// Resolve code: either from exampleId or customCode, but not both
 	let code: string;
+	// Saved examples pin their own compat date; custom code falls back to
+	// runInLoader's default (see src/runtime/loader.ts DEFAULT_COMPAT_DATE).
+	let compatDate: string | undefined;
 
 	if (exampleId !== undefined) {
 		// exampleId provided - look it up
@@ -124,6 +127,7 @@ async function handleRun(request: Request, env: Env, ctx: ExecutionContext): Pro
 		}
 
 		code = example.code;
+		compatDate = example.compatDate;
 	} else if (customCode !== undefined) {
 		// customCode provided
 		if (typeof customCode !== 'string') {
@@ -158,7 +162,7 @@ async function handleRun(request: Request, env: Env, ctx: ExecutionContext): Pro
 
 	// Run code in loader
 	const startTime = performance.now();
-	const result = await runInLoader(env, fetchOutcome.input, code, runId, ctx);
+	const result = await runInLoader(env, fetchOutcome.input, code, runId, ctx, compatDate);
 	const timingMs = Math.round(performance.now() - startTime);
 
 	// Read logs from LogSession

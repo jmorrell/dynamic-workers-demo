@@ -1,5 +1,3 @@
-// pattern: Imperative Shell
-
 import { DurableObject } from 'cloudflare:workers';
 import type { LogLine, LogBundle } from './log-types';
 import { LOG_MAX_LINES, LOG_MAX_BYTES } from './log-types';

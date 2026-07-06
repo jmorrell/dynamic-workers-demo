@@ -1,11 +1,12 @@
 import { describe, it, expect, beforeEach } from 'vitest';
-import { env } from 'cloudflare:test';
+import { env, createExecutionContext } from 'cloudflare:test';
 import { runInLoader } from '../../src/runtime/loader';
 import { classifyLoaderError } from '../../src/runtime/core';
 import type { RunInput } from '../../src/runtime/types';
 
 describe('Safety demos: hostile code containment', () => {
 	let testInput: RunInput;
+	let ctx: ExecutionContext;
 
 	beforeEach(() => {
 		testInput = {
@@ -16,6 +17,7 @@ describe('Safety demos: hostile code containment', () => {
 			body: '<html>Test page</html>',
 			truncated: false,
 		};
+		ctx = createExecutionContext();
 	});
 
 	describe('AC5.2: blocked-fetch safety demo', () => {
@@ -27,7 +29,7 @@ export default async function transform(input) {
 	return { status: res.status, from: input.url };
 }
 `;
-			const result = await runInLoader(env, testInput, blockedFetchCode);
+			const result = await runInLoader(env, testInput, blockedFetchCode, crypto.randomUUID(), ctx);
 
 			expect(result.ok).toBe(false);
 			if (!result.ok) {
@@ -76,9 +78,9 @@ export default async function transform(input) {
 
 				// Run multiple trivial requests concurrently to verify host responsiveness
 				const results = await Promise.all([
-					runInLoader(env, testInput, trivialCode),
-					runInLoader(env, testInput, trivialCode),
-					runInLoader(env, testInput, trivialCode),
+					runInLoader(env, testInput, trivialCode, crypto.randomUUID(), ctx),
+					runInLoader(env, testInput, trivialCode, crypto.randomUUID(), ctx),
+					runInLoader(env, testInput, trivialCode, crypto.randomUUID(), ctx),
 				]);
 
 				// All trivial requests must succeed
@@ -97,9 +99,9 @@ export default async function transform(input) {
 				const trivialCode = 'export default (input) => input.status';
 
 				// Issue three sequential requests
-				const result1 = await runInLoader(env, testInput, trivialCode);
-				const result2 = await runInLoader(env, testInput, trivialCode);
-				const result3 = await runInLoader(env, testInput, trivialCode);
+				const result1 = await runInLoader(env, testInput, trivialCode, crypto.randomUUID(), ctx);
+				const result2 = await runInLoader(env, testInput, trivialCode, crypto.randomUUID(), ctx);
+				const result3 = await runInLoader(env, testInput, trivialCode, crypto.randomUUID(), ctx);
 
 				// All should succeed
 				expect(result1.ok).toBe(true);

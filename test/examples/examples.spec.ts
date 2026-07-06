@@ -1,8 +1,7 @@
-// pattern: Imperative Shell
 // Integration tests running bundled example code through the loader
 
 import { describe, it, expect } from 'vitest';
-import { env } from 'cloudflare:test';
+import { env, createExecutionContext } from 'cloudflare:test';
 import { runInLoader } from '../../src/runtime/loader';
 import { getExample } from '../../src/examples/manifest';
 import type { RunInput } from '../../src/runtime/types';
@@ -281,7 +280,8 @@ describe('Example transforms through loader (AC2.1–AC2.5)', () => {
 				truncated: false,
 			};
 
-			const result = await runInLoader(env, input, example.code);
+			const ctx = createExecutionContext();
+			const result = await runInLoader(env, input, example.code, crypto.randomUUID(), ctx);
 
 			expect(result.ok).toBe(true);
 			if (result.ok) {
@@ -311,7 +311,8 @@ describe('Example transforms through loader (AC2.1–AC2.5)', () => {
 				truncated: false,
 			};
 
-			const result = await runInLoader(env, input, example.code);
+			const ctx = createExecutionContext();
+			const result = await runInLoader(env, input, example.code, crypto.randomUUID(), ctx);
 
 			expect(result.ok).toBe(true);
 			if (result.ok) {
@@ -340,7 +341,8 @@ describe('Example transforms through loader (AC2.1–AC2.5)', () => {
 				truncated: false,
 			};
 
-			const result = await runInLoader(env, input, example.code);
+			const ctx = createExecutionContext();
+			const result = await runInLoader(env, input, example.code, crypto.randomUUID(), ctx);
 
 			expect(result.ok).toBe(true);
 			if (result.ok) {
@@ -376,7 +378,8 @@ describe('Example transforms through loader (AC2.1–AC2.5)', () => {
 				truncated: false,
 			};
 
-			const result = await runInLoader(env, input, example.code);
+			const ctx = createExecutionContext();
+			const result = await runInLoader(env, input, example.code, crypto.randomUUID(), ctx);
 
 			expect(result.ok).toBe(true);
 			if (result.ok) {
@@ -412,7 +415,8 @@ describe('Example transforms through loader (AC2.1–AC2.5)', () => {
 				truncated: false,
 			};
 
-			const result = await runInLoader(env, input, example.code);
+			const ctx = createExecutionContext();
+			const result = await runInLoader(env, input, example.code, crypto.randomUUID(), ctx);
 
 			// The markdown transform's try/catch keeps it total: even on empty/garbage
 			// input it returns ok:true with a structured object (markdown is always a
@@ -438,7 +442,8 @@ describe('Example transforms through loader (AC2.1–AC2.5)', () => {
 				truncated: false,
 			};
 
-			const result = await runInLoader(env, input, example.code);
+			const ctx = createExecutionContext();
+			const result = await runInLoader(env, input, example.code, crypto.randomUUID(), ctx);
 
 			expect(result.ok).toBe(true);
 			if (result.ok) {
@@ -461,7 +466,8 @@ describe('Example transforms through loader (AC2.1–AC2.5)', () => {
 				truncated: false,
 			};
 
-			const result = await runInLoader(env, input, example.code);
+			const ctx = createExecutionContext();
+			const result = await runInLoader(env, input, example.code, crypto.randomUUID(), ctx);
 
 			expect(result.ok).toBe(true);
 			if (result.ok) {
@@ -485,7 +491,8 @@ describe('Example transforms through loader (AC2.1–AC2.5)', () => {
 				truncated: false,
 			};
 
-			const result = await runInLoader(env, input, example.code);
+			const ctx = createExecutionContext();
+			const result = await runInLoader(env, input, example.code, crypto.randomUUID(), ctx);
 
 			expect(result.ok).toBe(true);
 			if (result.ok) {
@@ -524,7 +531,8 @@ describe('Example transforms through loader (AC2.1–AC2.5)', () => {
 				truncated: false,
 			};
 
-			const result = await runInLoader(env, input, example.code);
+			const ctx = createExecutionContext();
+			const result = await runInLoader(env, input, example.code, crypto.randomUUID(), ctx);
 
 			// fetch() is blocked by globalOutbound: null; the harness converts the
 			// thrown error into a structured network_blocked result (no host crash).

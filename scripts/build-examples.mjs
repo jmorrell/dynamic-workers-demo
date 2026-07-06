@@ -86,6 +86,7 @@ async function buildManifest() {
 				suggestedUrls: example.suggestedUrls,
 				source,
 				code,
+				compatDate: example.compatDate,
 			});
 		} catch (error) {
 			console.error(`Failed to build example ${example.id}:`, error.message);
