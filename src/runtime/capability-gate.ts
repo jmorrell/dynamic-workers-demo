@@ -66,6 +66,12 @@ export class CapabilityGate extends WorkerEntrypoint<Env> {
 		try {
 			return await fetch(url.toString(), {
 				signal: controller.signal,
+				// Redirects are intentionally NOT followed: an allowlisted URL could
+				// 302 to a private/loopback address, and following it would fetch
+				// that address with the allowlist already satisfied, bypassing
+				// guardFetchUrl. A 3xx comes back to the transform as a plain
+				// { status: 3xx, ... } result instead.
+				redirect: 'manual',
 				headers: {
 					'User-Agent': 'DynamicWorkersDemo/1.0 (+https://github.com/; transform sandbox)',
 				},

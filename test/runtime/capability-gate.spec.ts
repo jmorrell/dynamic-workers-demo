@@ -120,6 +120,58 @@ describe('CapabilityGate', () => {
 		});
 	});
 
+	describe('redirect handling', () => {
+		it('does not follow redirects: an allowed URL that 302s yields the 3xx status, not the redirect target body', async () => {
+			stubGateFetch((url) =>
+				new Response('', {
+					status: 302,
+					headers: { location: 'http://169.254.169.254/latest/meta-data' },
+				}),
+			);
+
+			const allowed = 'https://example.com/redirector';
+			const code = `export default async (env, input) => {
+				const res = await env.fetch('${allowed}');
+				return { status: res.status, body: res.body };
+			}`;
+
+			const result = await runInLoader(env, makeInput(), code, crypto.randomUUID(), ctx, {
+				permissions: { fetch: 'page-links' },
+				allowedUrls: [allowed],
+			});
+
+			expect(result.type).toBe('success');
+			if (result.type === 'success') {
+				expect(result.value).toEqual({ status: 302, body: '' });
+			}
+		});
+
+		it('requests with redirect: manual so the underlying fetch never follows the redirect itself', async () => {
+			let capturedInit: RequestInit | undefined;
+			vi.stubGlobal(
+				'fetch',
+				vi.fn((_input: RequestInfo | URL, init?: RequestInit) => {
+					capturedInit = init;
+					return Promise.resolve(new Response('ok', { status: 200, headers: { 'content-type': 'text/plain' } }));
+				}),
+			);
+
+			const allowed = 'https://example.com/linked';
+			const code = `export default async (env, input) => {
+				const res = await env.fetch('${allowed}');
+				return res.status;
+			}`;
+
+			const result = await runInLoader(env, makeInput(), code, crypto.randomUUID(), ctx, {
+				permissions: { fetch: 'page-links' },
+				allowedUrls: [allowed],
+			});
+
+			expect(result.type).toBe('success');
+			expect(capturedInit?.redirect).toBe('manual');
+		});
+	});
+
 	describe('fetchFile', () => {
 		it('returns bytes for an allowed URL', async () => {
 			stubGateFetch(() => new Response(new Uint8Array([1, 2, 3, 4]), { status: 200, headers: { 'content-type': 'application/octet-stream' } }));

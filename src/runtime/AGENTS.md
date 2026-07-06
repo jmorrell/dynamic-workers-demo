@@ -123,9 +123,14 @@ the target URL, captures the sandbox's logs, and enforces abuse gates.
   8s timeout, 5 gate fetches per run (host-side tally keyed by runId — workerd
   instantiates a fresh entrypoint per RPC, so this cannot be instance state).
 - `guardFetchUrl` (core, pure) blocks non-http(s) and private/loopback/link-local
-  IP literals + localhost; used by the gate (and available to the target fetch).
+  IP literals + localhost; used by the gate AND by `fetchTarget` (pre-fetch on
+  the requested URL, and again post-fetch on `response.url` if it differs —
+  `fetch` follows redirects transparently, so the final URL must be re-checked).
 - `fetchTarget` caps body (default 2 MiB) and timeout (default 8s), truncating
   at a UTF-8 boundary; sets `truncated`.
+- The gate's outbound fetch (`doFetch`) uses `redirect: 'manual'` — an
+  allowlisted URL that 302s to a private address must not be silently followed
+  past the guard; the transform instead sees a plain `{ status: 3xx, ... }`.
 
 ## Key Files
 - `loader.ts` - load/cache/invoke the Dynamic Worker (shell)

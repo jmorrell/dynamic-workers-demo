@@ -26,6 +26,52 @@ describe('fetchTarget', () => {
 			expect(result.type).toBe('failure');
 		});
 
+		describe('SSRF guard', () => {
+			it.each([
+				'http://localhost/secret',
+				'http://127.0.0.1/secret',
+				'http://10.0.0.1/secret',
+				'http://[::1]/secret',
+				'http://169.254.169.254/latest/meta-data',
+			])('rejects %s with fetch_failed and never calls fetch', async (url) => {
+				const fetchMock = vi.fn();
+				vi.stubGlobal('fetch', fetchMock);
+
+				const result = await fetchTarget(url);
+
+				expect(result.type).toBe('failure');
+				if (result.type === 'failure') {
+					expect(result.error.kind).toBe('fetch_failed');
+					expect(result.error.message).toContain('blocked host');
+				}
+				expect(fetchMock).not.toHaveBeenCalled();
+			});
+
+			it('fails a redirect that lands on a private address after the fetch resolves', async () => {
+				const fetchMock = vi.fn(() => {
+					const response = new Response('internal', {
+						status: 200,
+						headers: { 'content-type': 'text/plain' },
+					});
+					Object.defineProperty(response, 'url', {
+						value: 'http://169.254.169.254/latest/meta-data',
+						writable: false,
+					});
+					return Promise.resolve(response);
+				});
+				vi.stubGlobal('fetch', fetchMock);
+
+				const result = await fetchTarget('https://example.com/redirects-away');
+
+				expect(fetchMock).toHaveBeenCalled();
+				expect(result.type).toBe('failure');
+				if (result.type === 'failure') {
+					expect(result.error.kind).toBe('fetch_failed');
+					expect(result.error.message).toContain('blocked host');
+				}
+			});
+		});
+
 		it('accepts http URLs', async () => {
 			vi.stubGlobal(
 				'fetch',

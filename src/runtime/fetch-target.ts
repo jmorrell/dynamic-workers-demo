@@ -1,4 +1,4 @@
-import { truncateBody } from './core';
+import { guardFetchUrl, truncateBody } from './core';
 import type { FetchOutcome, RunInput } from './types';
 
 /**
@@ -15,15 +15,15 @@ export async function fetchTarget(
 	const timeoutMs = options?.timeoutMs ?? 8000;
 	const maxBytes = options?.maxBytes ?? 2 * 1024 * 1024;
 
-	// Validate URL
-	try {
-		new URL(url);
-	} catch {
+	// Validate URL and reject SSRF-shaped targets (private/loopback/link-local
+	// IP literals, localhost, non-http(s)) before making any network call.
+	const guard = guardFetchUrl(url);
+	if (!guard.ok) {
 		return {
 			type: 'failure',
 			error: {
 				kind: 'fetch_failed',
-				message: `invalid URL: ${url}`,
+				message: guard.reason,
 			},
 		};
 	}
@@ -37,13 +37,29 @@ export async function fetchTarget(
 			signal: controller.signal,
 			// Identify the fetcher honestly. Many sites reject blank or known-library
 			// User-Agents with a 403; an honest descriptive UA satisfies those without
-			// impersonating a browser. (Won't bypass datacenter-IP blocks like Reddit's.)
+			// impersonating a browser. (Won't bypass hard datacenter-IP blocks.)
 			headers: {
 				'User-Agent': 'DynamicWorkersDemo/1.0 (+https://github.com/; transform sandbox)',
 			},
 		});
 
 		clearTimeout(timeoutId);
+
+		// fetch() follows redirects transparently, so the final URL may be a
+		// private/loopback address even though the requested URL passed the guard.
+		// Re-check it before trusting anything about the response.
+		if (response.url && response.url !== url) {
+			const redirectGuard = guardFetchUrl(response.url);
+			if (!redirectGuard.ok) {
+				return {
+					type: 'failure',
+					error: {
+						kind: 'fetch_failed',
+						message: redirectGuard.reason,
+					},
+				};
+			}
+		}
 
 		// Check response status
 		if (!response.ok) {
