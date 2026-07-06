@@ -25,24 +25,27 @@ the target URL, captures the sandbox's logs, and enforces abuse gates.
   default no-network grant; with fetch permission it is
   `{ fetch(url), fetchFile(url) }`, both proxying to the host `CapabilityGate`.
 - **Permissions**: `type Permissions = { fetch: 'page-links' | 'none'; cpuMs?;
-  fetchDepth? }`. Default `{ fetch: 'none' }`; `cpuMs` defaults to `CPU_LIMIT_MS`
-  (50) and is clamped to `[1, 5000]` (`clampCpuMs` in core); `fetchDepth`
-  (meaningful only with `fetch: 'page-links'`) defaults to 1 and is clamped to
-  `[1, 3]` (`clampFetchDepth` in core). Example runs use the example's registered
+  fetchDepth?; maxFetches? }`. Default `{ fetch: 'none' }`; `cpuMs` defaults to
+  `CPU_LIMIT_MS` (50) and is clamped to `[1, 5000]` (`clampCpuMs` in core);
+  `fetchDepth` (meaningful only with `fetch: 'page-links'`) defaults to 1 and is
+  clamped to `[1, 3]` (`clampFetchDepth` in core); `maxFetches` (meaningful only
+  with `fetch: 'page-links'`) defaults to 5 and is clamped to `[1, 100]`
+  (`clampMaxFetches` in core). Example runs use the example's registered
   permissions (request-supplied ignored); custom runs use the request's,
   validated/clamped (bad shape → 400).
 - **Gate contract**: `CapabilityGate` (WorkerEntrypoint, reached via
-  `ctx.exports.CapabilityGate({ props: { runId, allowedUrls, fetchDepth } })`,
+  `ctx.exports.CapabilityGate({ props: { runId, allowedUrls, fetchDepth, maxFetches } })`,
   attached as the loaded worker's `env.GATE`). `fetchText(url) → { status,
   contentType, body, truncated }` (2 MiB, UTF-8-boundary truncation); `fetchFile(url)
   → { status, contentType, bytes, truncated }` (20 MiB, byte truncation). Both
   require the normalized URL to be reachable on the allowlist — URLs referenced by
   the fetched page, plus — up to `fetchDepth` — URLs referenced by pages the run has
   successfully text-fetched (no arbitrary spidering beyond that bound) — pass the
-  SSRF host guard (`guardFetchUrl`), obey an 8s timeout, and share a per-run 5-fetch
-  cap. Only `fetchText` grows the allowlist on a successful (`response.ok`) fetch,
-  by extracting the served body's links at the next depth; `fetchFile` never does
-  (binary responses, text-only extraction).
+  SSRF host guard (`guardFetchUrl`), obey an 8s timeout, and share a per-run fetch
+  cap (granted `maxFetches`, default 5, clamp `[1, 100]`). Only `fetchText` grows
+  the allowlist on a successful (`response.ok`) fetch, by extracting the served
+  body's links at the next depth; `fetchFile` never does (binary responses,
+  text-only extraction).
 - **URL extraction**: `extractLinkedUrls` (pure, `extract-urls.ts`) parses HTML
   (linkedom, host-side) URL-bearing attributes (incl. `srcset` candidates and
   absolute-URL `meta[content]`) or, for JSON/text, regex-matches absolute http(s)
@@ -129,9 +132,9 @@ the target URL, captures the sandbox's logs, and enforces abuse gates.
 - **Gate fetch counter is module-scoped, not instance state**: workerd
   instantiates a fresh `WorkerEntrypoint` per RPC call, so a per-instance counter
   would reset each `env.fetch`. The gate keeps a module-level `Map<runId, count>`
-  (same in-memory trade as `LogSession`). The sandbox's `limits.subRequests: 5`
-  caps this from the other side in production; the host tally is the locally
-  testable half.
+  (same in-memory trade as `LogSession`). The sandbox's `limits.subRequests`
+  (mirroring the granted `maxFetches`) caps this from the other side in
+  production; the host tally is the locally testable half.
 - **SYNC PARTNER**: `harness-source.ts` inlines `classifyTransformError` as a
   string; `core.ts` is canonical. Change both together.
 
@@ -141,15 +144,26 @@ the target URL, captures the sandbox's logs, and enforces abuse gates.
   bindings/secrets in. The gate returns only plain data — no bindings reach the
   sandbox through it.
 - Containment limits: `CPU_LIMIT_MS = 50` (overridable per-run via clamped
-  `permissions.cpuMs`), `subRequests: 5`, `globalOutbound: null` (always).
+  `permissions.cpuMs`), `subRequests: 5` by default, mirroring the granted
+  `maxFetches` (clamped `[1, 100]`) under a page-links grant — see the gate
+  fetch caps bullet below — `globalOutbound: null` (always).
 - Gate fetch caps: `fetchText` 2 MiB (UTF-8-boundary), `fetchFile` 20 MiB (byte),
-  8s timeout, 5 gate fetches per run (host-side tally keyed by runId — workerd
-  instantiates a fresh entrypoint per RPC, so this cannot be instance state).
-  Allowlist growth from `fetchDepth` is capped at `GATE_MAX_GROWN_URLS` (5000)
-  grown entries per run — a memory bound only; the real reachability bound is the
-  5-fetch cap (at most 5 pages can ever contribute grown URLs). `releaseGateRun(runId)`
-  (called from `src/index.ts`'s `handleRun` after logs are read) deletes a run's
-  entries from both the fetch-count and grown-allowlist maps — best-effort hygiene;
+  8s timeout, `maxFetches` gate fetches per run (default 5, clamped `[1, 100]` —
+  host-side tally keyed by runId — workerd instantiates a fresh entrypoint per
+  RPC, so this cannot be instance state). The loaded worker's `limits.subRequests`
+  mirrors the same granted `maxFetches` value (both sides of the cap must move
+  together, same as the fixed 5/5 default before this existed) — except when
+  `fetch` isn't `'page-links'`, where there's no gate to mirror and
+  `subRequests` stays at the old constant 5. Note: gate fetches execute in the
+  HOST worker's own request context, and the Workers platform caps subrequests
+  per request (50 free plan, 1000 paid — see `/workers/platform/limits`); a
+  `maxFetches` grant near 100 can hit that platform wall before the gate's own
+  tally does on a free-plan deployment. Allowlist growth from `fetchDepth` is
+  capped at `GATE_MAX_GROWN_URLS` (5000) grown entries per run — a memory bound
+  only; the real reachability bound is the granted `maxFetches` (at most that
+  many pages can ever contribute grown URLs). `releaseGateRun(runId)` (called
+  from `src/index.ts`'s `handleRun` after logs are read) deletes a run's entries
+  from both the fetch-count and grown-allowlist maps — best-effort hygiene;
   correctness never depends on it running.
 - `guardFetchUrl` (core, pure) blocks non-http(s) and private/loopback/link-local
   IP literals + localhost; used by the gate AND by `fetchTarget` (pre-fetch on

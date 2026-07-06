@@ -26,6 +26,36 @@ export function clampFetchDepth(value: number | undefined): number {
 	return Math.max(FETCH_DEPTH_MIN, Math.min(FETCH_DEPTH_MAX, Math.round(value)));
 }
 
+/** Hard bounds for a permission's per-run gate fetch budget, clamped server-side. */
+export const MAX_FETCHES_MIN = 1;
+export const MAX_FETCHES_MAX = 100;
+/**
+ * Default per-run gate fetch budget when a permission omits `maxFetches` — the
+ * canonical default, referenced by both `clampMaxFetches` below and the gate's
+ * exported `GATE_MAX_FETCHES` (kept for existing tests/imports), so there is
+ * only one place that says "5".
+ */
+export const DEFAULT_MAX_FETCHES = 5;
+
+/**
+ * Clamps a caller-supplied gate fetch budget into [MAX_FETCHES_MIN,
+ * MAX_FETCHES_MAX]. An absent or non-finite value falls back to
+ * DEFAULT_MAX_FETCHES (today's fixed 5-fetch cap). Meaningful only alongside
+ * `fetch: 'page-links'`.
+ *
+ * Note: gate fetches run in the HOST worker's own request context (the
+ * CapabilityGate is a service-bound loopback, not sandbox code), and the
+ * Workers platform caps subrequests per request — 50 on the free plan, 1000 on
+ * paid (see developers.cloudflare.com/workers/platform/limits). A grant near
+ * the top of this range can hit that platform wall before the gate's own tally
+ * does on a free-plan deployment; this clamp deliberately does not second-guess
+ * that account-level limit.
+ */
+export function clampMaxFetches(value: number | undefined): number {
+	if (typeof value !== 'number' || !Number.isFinite(value)) return DEFAULT_MAX_FETCHES;
+	return Math.max(MAX_FETCHES_MIN, Math.min(MAX_FETCHES_MAX, Math.round(value)));
+}
+
 /** Narrowing validator for a caller-supplied Permissions object (custom runs). */
 export function isValidPermissions(value: unknown): value is Permissions {
 	if (typeof value !== 'object' || value === null) return false;
@@ -35,6 +65,8 @@ export function isValidPermissions(value: unknown): value is Permissions {
 	if (cpuMs !== undefined && typeof cpuMs !== 'number') return false;
 	const fetchDepth = (value as Record<string, unknown>).fetchDepth;
 	if (fetchDepth !== undefined && typeof fetchDepth !== 'number') return false;
+	const maxFetches = (value as Record<string, unknown>).maxFetches;
+	if (maxFetches !== undefined && typeof maxFetches !== 'number') return false;
 	return true;
 }
 

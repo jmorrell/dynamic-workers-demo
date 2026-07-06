@@ -340,5 +340,19 @@ describe('render helpers', () => {
 		it('orders depth before cpu when both are present', () => {
 			expect(formatPermissions({ fetch: 'page-links', fetchDepth: 2, cpuMs: 500 })).toBe('permissions: fetch page-links · depth 2 · cpu 500ms');
 		});
+
+		it('includes a fetches segment when maxFetches is present', () => {
+			expect(formatPermissions({ fetch: 'page-links', maxFetches: 6 })).toBe('permissions: fetch page-links · fetches 6');
+		});
+
+		it('omits the fetches segment when maxFetches is absent', () => {
+			expect(formatPermissions({ fetch: 'page-links', cpuMs: 500 })).toBe('permissions: fetch page-links · cpu 500ms');
+		});
+
+		it('orders fetch · depth · fetches · cpu when all are present', () => {
+			expect(formatPermissions({ fetch: 'page-links', fetchDepth: 2, maxFetches: 6, cpuMs: 500 })).toBe(
+				'permissions: fetch page-links · depth 2 · fetches 6 · cpu 500ms',
+			);
+		});
 	});
 });

@@ -9,7 +9,8 @@
 // Deliberately NO fetchDepth grant here (unlike arxiv-digest): a feed's own
 // payload already lists every article's URL directly — there's no second hop
 // to grow into, so the default depth-1 page-links grant covers every
-// env.fetch this example makes.
+// env.fetch this example makes. It DOES raise maxFetches to 6 (default is 5)
+// so all six of MAX_ITEMS' article fetches fit within the per-run gate budget.
 //
 // Known gap: extractLinkedUrls (the host-side allowlist builder) treats an RSS
 // feed's XML content-type as plain text and regex-matches absolute
@@ -26,7 +27,7 @@ import { parseHTML } from 'linkedom';
 import { Defuddle } from 'defuddle/node';
 import type { RunInput, TransformEnv } from '../runtime/types';
 
-const MAX_ITEMS = 3;
+const MAX_ITEMS = 6;
 const MARKDOWN_LIMIT = 1200;
 
 function stripCdata(value: string): string {

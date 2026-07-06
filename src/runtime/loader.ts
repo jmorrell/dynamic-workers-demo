@@ -1,4 +1,4 @@
-import { classifyLoaderError, clampCpuMs, clampFetchDepth, hashCode } from './core';
+import { classifyLoaderError, clampCpuMs, clampFetchDepth, clampMaxFetches, hashCode } from './core';
 import type { Permissions, RunInput, RunResult } from './types';
 import { HARNESS_SOURCE } from './harness-source';
 
@@ -99,7 +99,9 @@ export async function runInLoader(
 			// ctx.exports is typed {} until GlobalProps is generated; narrow the loopback bindings.
 			const exports = ctx.exports as {
 				LogTailer: (o: { props: { runId: string } }) => Fetcher;
-				CapabilityGate: (o: { props: { runId: string; allowedUrls: ReadonlyArray<string>; fetchDepth: number } }) => Fetcher;
+				CapabilityGate: (o: {
+					props: { runId: string; allowedUrls: ReadonlyArray<string>; fetchDepth: number; maxFetches: number };
+				}) => Fetcher;
 			};
 
 			// The loaded worker's env carries at most the CapabilityGate loopback —
@@ -111,10 +113,24 @@ export async function runInLoader(
 				permissions?.fetch === 'page-links'
 					? {
 							GATE: exports.CapabilityGate({
-								props: { runId, allowedUrls: allowedUrls ?? [], fetchDepth: clampFetchDepth(permissions.fetchDepth) },
+								props: {
+									runId,
+									allowedUrls: allowedUrls ?? [],
+									fetchDepth: clampFetchDepth(permissions.fetchDepth),
+									maxFetches: clampMaxFetches(permissions.maxFetches),
+								},
 							}),
 						}
 					: {};
+
+			// subRequests mirrors the granted maxFetches (host-side tally in the gate
+			// and this sandbox-side platform limit must stay in lockstep, same as
+			// they always have at the fixed 5/5 default) — but only under a
+			// page-links grant. With no fetch permission there's no gate to mirror
+			// and no reason to widen a sandbox that has zero network access anyway,
+			// so subRequests stays at the old constant 5 in that case.
+			const subRequests =
+				permissions?.fetch === 'page-links' ? clampMaxFetches(permissions.maxFetches) : 5;
 
 			const workerCode: WorkerLoaderWorkerCode = {
 				compatibilityDate,
@@ -125,7 +141,7 @@ export async function runInLoader(
 				globalOutbound: null, // Block all ambient outbound fetch; permitted fetch goes through GATE
 				limits: {
 					cpuMs: clampCpuMs(permissions?.cpuMs, CPU_LIMIT_MS),
-					subRequests: 5,
+					subRequests,
 				},
 			};
 

@@ -70,7 +70,7 @@ export const EXAMPLE_REGISTRY: ReadonlyArray<ExampleMeta> = [
 		suggestedUrls: ['https://blog.cloudflare.com/rss/', 'https://hnrss.org/frontpage'],
 		entry: 'src/examples/rss-digest.ts',
 		compatDate: '2026-06-22',
-		permissions: { fetch: 'page-links', cpuMs: 2000 },
+		permissions: { fetch: 'page-links', maxFetches: 6, cpuMs: 5000 },
 	},
 	{
 		id: 'cpu-spin',
@@ -138,7 +138,7 @@ export const EXAMPLE_REGISTRY: ReadonlyArray<ExampleMeta> = [
 		suggestedUrls: ['https://arxiv.org/list/cs.LG/recent', 'https://en.wikipedia.org/wiki/Attention_Is_All_You_Need'],
 		entry: 'src/examples/arxiv-digest.ts',
 		compatDate: '2026-06-22',
-		permissions: { fetch: 'page-links', fetchDepth: 2, cpuMs: 5000 },
+		permissions: { fetch: 'page-links', fetchDepth: 2, maxFetches: 6, cpuMs: 5000 },
 		modules: [
 			{ name: 'liteparse.wasm', kind: 'wasm', file: 'node_modules/@llamaindex/liteparse-wasm/pkg/liteparse_wasm_bg.wasm' },
 		],

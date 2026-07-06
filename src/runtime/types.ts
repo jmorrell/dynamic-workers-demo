@@ -26,12 +26,16 @@ export type UserWorker =
  * allowlist transitively — depth 1 (default) is exactly "URLs referenced by the
  * fetched page"; depth N also allows URLs referenced by pages the run has
  * successfully text-fetched, up to N-1 hops out. Clamped to [1,3] (`clampFetchDepth`
- * in core).
+ * in core). `maxFetches` is also meaningful only alongside `fetch: 'page-links'`: it
+ * is the per-run cap on `env.fetch`/`env.fetchFile` calls (both host-tallied by the
+ * CapabilityGate and mirrored into the sandbox's own `limits.subRequests`); default
+ * 5, clamped to [1,100] (`clampMaxFetches` in core).
  */
 export type Permissions = {
 	fetch: 'page-links' | 'none';
 	cpuMs?: number;
 	fetchDepth?: number;
+	maxFetches?: number;
 };
 
 export type RunRequestBody = {

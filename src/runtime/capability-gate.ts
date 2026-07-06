@@ -1,10 +1,17 @@
 import { WorkerEntrypoint } from 'cloudflare:workers';
-import { clampFetchDepth, guardFetchUrl, truncateBody } from './core';
+import { clampFetchDepth, clampMaxFetches, DEFAULT_MAX_FETCHES, guardFetchUrl, truncateBody } from './core';
 import { extractLinkedUrls } from './extract-urls';
 import type { FetchFileResult, FetchTextResult } from './types';
 
-/** Per-run total cap on gate fetches (mirrors the loaded worker's limits.subRequests). */
-export const GATE_MAX_FETCHES = 5;
+/**
+ * Default per-run total cap on gate fetches, when a run doesn't override it via
+ * `permissions.maxFetches` (mirrors the loaded worker's `limits.subRequests` in
+ * that case). Re-exported from `core.ts`'s `DEFAULT_MAX_FETCHES` — the canonical
+ * constant, also used by `clampMaxFetches` — so existing tests/imports that
+ * reference `GATE_MAX_FETCHES` keep working. The actual enforced cap per run is
+ * `clampMaxFetches(props.maxFetches)`, not this constant.
+ */
+export const GATE_MAX_FETCHES = DEFAULT_MAX_FETCHES;
 /** Timeout for a single gate fetch (matches fetchTarget). */
 const GATE_TIMEOUT_MS = 8000;
 /** Body cap for fetchText (UTF-8-boundary truncation, like fetchTarget). */
@@ -14,8 +21,10 @@ const GATE_FILE_MAX_BYTES = 20 * 1024 * 1024;
 /**
  * Per-run cap on how many grown-allowlist entries (from transitive fetchDepth
  * expansion) can accumulate. This bounds memory only — it is generous relative
- * to the real reachability bound, which is GATE_MAX_FETCHES (only 5 gate fetches
- * can ever happen per run, so at most 5 pages can ever contribute grown URLs).
+ * to the real reachability bound, which is the run's granted `maxFetches`
+ * (clamped to [1,100] — see `clampMaxFetches` in core.ts): only that many gate
+ * fetches can ever happen per run, so at most that many pages can ever
+ * contribute grown URLs.
  */
 export const GATE_MAX_GROWN_URLS = 5000;
 
@@ -23,6 +32,7 @@ type GateProps = {
 	runId: string;
 	allowedUrls: ReadonlyArray<string>;
 	fetchDepth: number;
+	maxFetches: number;
 };
 
 // Per-run fetch tally. workerd instantiates a fresh WorkerEntrypoint per RPC
@@ -87,10 +97,11 @@ export class CapabilityGate extends WorkerEntrypoint<Env> {
 			throw new Error(`env.fetch denied: ${normalized} is not reachable within the granted fetch depth from the fetched page`);
 		}
 
-		const { runId } = this.props();
+		const { runId, maxFetches } = this.props();
+		const grantedMaxFetches = clampMaxFetches(maxFetches);
 		const used = fetchCounts.get(runId) ?? 0;
-		if (used >= GATE_MAX_FETCHES) {
-			throw new Error(`env.fetch denied: exceeded the ${GATE_MAX_FETCHES}-fetch limit for this run`);
+		if (used >= grantedMaxFetches) {
+			throw new Error(`env.fetch denied: exceeded the ${grantedMaxFetches}-fetch limit for this run`);
 		}
 		fetchCounts.set(runId, used + 1);
 

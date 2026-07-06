@@ -2,7 +2,7 @@
 
 // Point this at ANY page that references arXiv abstract pages — an arXiv
 // listing page, a Wikipedia article's references section, a blog post, an HN
-// thread. Collects up to 2 arXiv "/abs/" links, follows each to its abstract
+// thread. Collects up to 3 arXiv "/abs/" links, follows each to its abstract
 // page, then follows the PDF link found ON that abstract page and parses it
 // to markdown with the liteparse wasm library (see arxiv-pdf.ts for the
 // wasm-injection contract this reuses verbatim).
@@ -18,13 +18,17 @@
 // but a Wikipedia article or blog post citing a paper never does, and depth 2
 // is what makes this example work generically on any citing page, not just
 // arXiv's own listings.)
+//
+// Why maxFetches: 6 (default is 5): each paper costs 2 gate fetches — env.fetch
+// on the abstract page, then env.fetchFile on its PDF — so MAX_PAPERS (3) papers
+// need up to 3 × 2 = 6 gate fetches in the worst case (no per-paper failures).
 
 import liteparseWasm from './liteparse.wasm';
 import { LiteParse, initSync } from '@llamaindex/liteparse-wasm';
 import { parseHTML } from 'linkedom';
 import type { RunInput, TransformEnv } from '../runtime/types';
 
-const MAX_PAPERS = 2;
+const MAX_PAPERS = 3;
 const MAX_PAGES = 2;
 const ABSTRACT_LIMIT = 600;
 const EXCERPT_LIMIT = 1500;
@@ -181,7 +185,7 @@ export default async function transform(env: TransformEnv, input: RunInput): Pro
 	}
 
 	// Sequential, not Promise.all: liteparse's initSync is idempotent but is not
-	// documented as safe to race concurrently, and at most 2 papers keeps this
+	// documented as safe to race concurrently, and at most 3 papers keeps this
 	// well inside the CPU budget either way.
 	const papers: unknown[] = [];
 	for (const absUrl of absUrls) {

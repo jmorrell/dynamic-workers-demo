@@ -54,6 +54,20 @@ describe('GET /api/examples handler', () => {
 		}
 	});
 
+	it('surfaces maxFetches in the digest examples permissions (round-tripped through the manifest)', async () => {
+		const request = new IncomingRequest('http://example.com/api/examples', { method: 'GET' });
+		const ctx = createExecutionContext();
+		const response = await worker.fetch(request, env, ctx);
+		await waitOnExecutionContext(ctx);
+
+		const data = await response.json<Array<{ id: string; permissions?: { fetch: string; fetchDepth?: number; maxFetches?: number } }>>();
+		const rssDigest = data.find((e) => e.id === 'rss-digest');
+		const arxivDigest = data.find((e) => e.id === 'arxiv-digest');
+		expect(rssDigest?.permissions?.maxFetches).toBe(6);
+		expect(arxivDigest?.permissions?.maxFetches).toBe(6);
+		expect(arxivDigest?.permissions?.fetchDepth).toBe(2);
+	});
+
 	it('never ships module base64 in the listing (module bytes are static assets)', async () => {
 		const request = new IncomingRequest('http://example.com/api/examples', { method: 'GET' });
 		const ctx = createExecutionContext();
@@ -600,6 +614,56 @@ describe('POST /api/run handler', () => {
 			expect(data.ok).toBe(false);
 			expect(data.error?.kind).toBe('transform_threw');
 			expect(data.error?.message).toContain('not reachable within the granted fetch depth from the fetched page');
+		});
+
+		it('custom run with maxFetches: 2 is denied on the third of three allowlisted fetches, naming the granted limit', async () => {
+			const urlA = 'https://example.com/max-fetches-a';
+			const urlB = 'https://example.com/max-fetches-b';
+			const urlC = 'https://example.com/max-fetches-c';
+			vi.stubGlobal(
+				'fetch',
+				vi.fn((input: RequestInfo | URL) => {
+					const u = typeof input === 'string' ? input : input.toString();
+					if (u === urlA || u === urlB || u === urlC) {
+						return Promise.resolve(new Response('ok', { status: 200, headers: { 'content-type': 'text/plain' } }));
+					}
+					return Promise.resolve(
+						new Response(
+							`<html><body><a href="${urlA}">a</a><a href="${urlB}">b</a><a href="${urlC}">c</a></body></html>`,
+							{ status: 200, headers: { 'content-type': 'text/html' } },
+						),
+					);
+				}),
+			);
+
+			const customCode = `export default async (env, input) => {
+				try {
+					await env.fetch('${urlA}');
+					await env.fetch('${urlB}');
+					await env.fetch('${urlC}');
+					return 'should-not-reach';
+				} catch (e) {
+					return String(e.message || e);
+				}
+			}`;
+
+			const request = new IncomingRequest('http://example.com/api/run', {
+				method: 'POST',
+				headers: { 'CF-Connecting-IP': '203.0.113.225' },
+				body: JSON.stringify({
+					worker: { type: 'custom', customCode },
+					url: 'http://example.com/page',
+					permissions: { fetch: 'page-links', maxFetches: 2 },
+				}),
+			});
+			const ctx = createExecutionContext();
+			const response = await worker.fetch(request, env, ctx);
+			await waitOnExecutionContext(ctx);
+
+			expect(response.status).toBe(200);
+			const data = await response.json<{ ok: boolean; result?: string }>();
+			expect(data.ok).toBe(true);
+			expect(data.result).toContain('2-fetch limit');
 		});
 
 		it('rejects a custom run with a malformed permissions shape (400 bad_request)', async () => {

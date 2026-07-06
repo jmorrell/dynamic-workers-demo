@@ -228,6 +228,37 @@ describe('CapabilityGate', () => {
 				expect(errs[0]).toContain('5-fetch limit');
 			}
 		});
+
+		it('honors a granted maxFetches: 2, denying the third fetch and naming the granted number', async () => {
+			stubGateFetch(() => new Response('ok', { status: 200, headers: { 'content-type': 'text/plain' } }));
+
+			const allowed = 'https://example.com/linked';
+			const code = `export default async (env, input) => {
+				const outcomes = [];
+				for (let i = 0; i < 3; i++) {
+					try {
+						const res = await env.fetch('${allowed}');
+						outcomes.push('ok:' + res.status);
+					} catch (e) {
+						outcomes.push('err:' + String(e.message || e));
+					}
+				}
+				return outcomes;
+			}`;
+
+			const result = await runInLoader(env, makeInput(), code, crypto.randomUUID(), ctx, {
+				permissions: { fetch: 'page-links', maxFetches: 2 },
+				allowedUrls: [allowed],
+			});
+
+			expect(result.type).toBe('success');
+			if (result.type === 'success') {
+				const outcomes = result.value as string[];
+				expect(outcomes[0]).toBe('ok:200');
+				expect(outcomes[1]).toBe('ok:200');
+				expect(outcomes[2]).toContain('2-fetch limit');
+			}
+		});
 	});
 
 	describe('fetchDepth (transitive allowlist growth)', () => {

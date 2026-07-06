@@ -1,5 +1,13 @@
 import { describe, it, expect } from 'vitest';
-import { hashCode, truncateBody, classifyTransformError, classifyLoaderError, clampFetchDepth, isValidPermissions } from '@/runtime/core';
+import {
+	hashCode,
+	truncateBody,
+	classifyTransformError,
+	classifyLoaderError,
+	clampFetchDepth,
+	clampMaxFetches,
+	isValidPermissions,
+} from '@/runtime/core';
 
 describe('hashCode', () => {
 	it('returns consistent hash for same input', async () => {
@@ -211,6 +219,36 @@ describe('clampFetchDepth', () => {
 	});
 });
 
+describe('clampMaxFetches', () => {
+	it('defaults to 5 when undefined', () => {
+		expect(clampMaxFetches(undefined)).toBe(5);
+	});
+
+	it('clamps 0 up to the minimum (1)', () => {
+		expect(clampMaxFetches(0)).toBe(1);
+	});
+
+	it('passes through 1 unchanged', () => {
+		expect(clampMaxFetches(1)).toBe(1);
+	});
+
+	it('passes through 100 unchanged', () => {
+		expect(clampMaxFetches(100)).toBe(100);
+	});
+
+	it('clamps 150 down to the maximum (100)', () => {
+		expect(clampMaxFetches(150)).toBe(100);
+	});
+
+	it('rounds 2.4 down to 2', () => {
+		expect(clampMaxFetches(2.4)).toBe(2);
+	});
+
+	it('falls back to 5 for NaN', () => {
+		expect(clampMaxFetches(NaN)).toBe(5);
+	});
+});
+
 describe('isValidPermissions', () => {
 	it('accepts a minimal valid permissions object', () => {
 		expect(isValidPermissions({ fetch: 'none' })).toBe(true);
@@ -226,6 +264,18 @@ describe('isValidPermissions', () => {
 
 	it('rejects a string fetchDepth', () => {
 		expect(isValidPermissions({ fetch: 'page-links', fetchDepth: '2' })).toBe(false);
+	});
+
+	it('accepts maxFetches as a number', () => {
+		expect(isValidPermissions({ fetch: 'page-links', maxFetches: 10 })).toBe(true);
+	});
+
+	it('accepts an absent maxFetches', () => {
+		expect(isValidPermissions({ fetch: 'page-links' })).toBe(true);
+	});
+
+	it('rejects a string maxFetches', () => {
+		expect(isValidPermissions({ fetch: 'page-links', maxFetches: '10' })).toBe(false);
 	});
 
 	it('rejects an invalid fetch value', () => {

@@ -81,10 +81,16 @@ describe('manifest', () => {
 	});
 
 	describe('permissions round-trip', () => {
-		it('exposes fetchDepth on arxiv-digest in the listing', () => {
+		it('exposes fetchDepth and maxFetches on arxiv-digest in the listing', () => {
 			const examples = listExamples();
 			const arxivDigest = examples.find((e) => e.id === 'arxiv-digest');
-			expect(arxivDigest?.permissions).toEqual({ fetch: 'page-links', fetchDepth: 2, cpuMs: 5000 });
+			expect(arxivDigest?.permissions).toEqual({ fetch: 'page-links', fetchDepth: 2, maxFetches: 6, cpuMs: 5000 });
+		});
+
+		it('exposes maxFetches on rss-digest in the listing', () => {
+			const examples = listExamples();
+			const rssDigest = examples.find((e) => e.id === 'rss-digest');
+			expect(rssDigest?.permissions).toEqual({ fetch: 'page-links', maxFetches: 6, cpuMs: 5000 });
 		});
 	});
 
