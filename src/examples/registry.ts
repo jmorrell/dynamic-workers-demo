@@ -32,6 +32,7 @@ export const SHARED_DEP_SPECIFIERS: ReadonlyArray<{ readonly specifier: string; 
 	{ specifier: 'defuddle/node', entry: 'defuddle/node' },
 	{ specifier: 'markdown-dom-polyfill', entry: 'src/examples/markdown-dom-polyfill.ts' },
 	{ specifier: '@cf-wasm/photon/others', entry: '@cf-wasm/photon/others' },
+	{ specifier: '@llamaindex/liteparse-wasm', entry: '@llamaindex/liteparse-wasm' },
 ];
 
 export const EXAMPLE_REGISTRY: ReadonlyArray<ExampleMeta> = [
@@ -103,5 +104,18 @@ export const EXAMPLE_REGISTRY: ReadonlyArray<ExampleMeta> = [
 		entry: 'src/examples/github-repo.ts',
 		compatDate: '2026-06-22',
 		permissions: { fetch: 'page-links' },
+	},
+	{
+		id: 'arxiv-pdf',
+		title: 'arXiv PDF → Markdown (wasm)',
+		description:
+			"Follows an arXiv abstract page's PDF link, fetches the paper's PDF bytes with env.fetchFile, and parses it to markdown with the liteparse wasm library.",
+		suggestedUrls: ['https://arxiv.org/abs/1706.03762', 'https://arxiv.org/abs/2005.14165'],
+		entry: 'src/examples/arxiv-pdf.ts',
+		compatDate: '2026-06-22',
+		permissions: { fetch: 'page-links', cpuMs: 5000 },
+		modules: [
+			{ name: 'liteparse.wasm', kind: 'wasm', file: 'node_modules/@llamaindex/liteparse-wasm/pkg/liteparse_wasm_bg.wasm' },
+		],
 	},
 ];

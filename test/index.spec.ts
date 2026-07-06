@@ -3,6 +3,7 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import worker, { setTurnstileVerifier } from '../src/index';
 import { getExample } from '../src/examples/manifest';
 import articleHtml from './examples/fixtures/article.html?raw';
+import dummyPdfBase64 from './examples/fixtures/dummy-pdf.base64.txt?raw';
 
 const IncomingRequest = Request<unknown, IncomingRequestCfProperties>;
 
@@ -34,7 +35,7 @@ describe('GET /api/examples handler', () => {
 
 		const data = await response.json<Array<{ id: string; title: string; description: string }>>();
 		expect(Array.isArray(data)).toBe(true);
-		expect(data.length).toBe(8);
+		expect(data.length).toBe(9);
 
 		// Should not contain code field
 		for (const example of data) {
@@ -711,6 +712,92 @@ export default async (env, input) => {
 			expect(decoded?.width).toBe(1);
 			expect(decoded?.height).toBe(1);
 			expect(decoded?.dhash).toMatch(/^[0-9a-f]{16}$/);
+		});
+	});
+
+	describe('arxiv-pdf example (liteparse wasm + fetchFile capability)', () => {
+		afterEach(() => {
+			vi.unstubAllGlobals();
+		});
+
+		function stubAbstractAndPdf(): void {
+			const abstractUrl = 'http://example.com/abs/1234.5678';
+			const pdfUrl = 'http://example.com/pdf/1234.5678';
+			vi.stubGlobal(
+				'fetch',
+				vi.fn((input: RequestInfo | URL) => {
+					const u = typeof input === 'string' ? input : input.toString();
+					if (u === pdfUrl) {
+						const bytes = Uint8Array.from(atob(dummyPdfBase64), (c) => c.charCodeAt(0));
+						return Promise.resolve(new Response(bytes, { status: 200, headers: { 'content-type': 'application/pdf' } }));
+					}
+					return Promise.resolve(
+						new Response('<html><body><a href="/pdf/1234.5678">View PDF</a></body></html>', {
+							status: 200,
+							headers: { 'content-type': 'text/html' },
+						}),
+					);
+				}),
+			);
+		}
+
+		it('POST /api/run { type: "example", exampleId: "arxiv-pdf" } fetches the PDF and parses it to markdown', async () => {
+			stubAbstractAndPdf();
+
+			const request = new IncomingRequest('http://example.com/api/run', {
+				method: 'POST',
+				headers: { 'CF-Connecting-IP': '203.0.113.242' },
+				body: JSON.stringify({
+					worker: { type: 'example', exampleId: 'arxiv-pdf' },
+					url: 'http://example.com/abs/1234.5678',
+				}),
+			});
+			const ctx = createExecutionContext();
+			const response = await worker.fetch(request, env, ctx);
+			await waitOnExecutionContext(ctx);
+
+			expect(response.status).toBe(200);
+			const data = await response.json<{
+				ok: boolean;
+				result?: { title: string | null; pages: number; markdown: string; markdownTruncated: boolean };
+				error?: { kind: string; message: string };
+			}>();
+			expect(data.ok).toBe(true);
+			expect(data.result?.title).toBe('Dummy PDF file');
+			expect(data.result?.pages).toBe(1);
+			expect(data.result?.markdown).toContain('Dummy PDF file');
+		});
+
+		it('POST /api/run { type: "example", exampleId: "arxiv-pdf" } fails readably when the page has no PDF link', async () => {
+			vi.stubGlobal(
+				'fetch',
+				vi.fn(() =>
+					Promise.resolve(
+						new Response('<html><body><p>No PDF here.</p></body></html>', {
+							status: 200,
+							headers: { 'content-type': 'text/html' },
+						}),
+					),
+				),
+			);
+
+			const request = new IncomingRequest('http://example.com/api/run', {
+				method: 'POST',
+				headers: { 'CF-Connecting-IP': '203.0.113.243' },
+				body: JSON.stringify({
+					worker: { type: 'example', exampleId: 'arxiv-pdf' },
+					url: 'http://example.com/abs/1234.5678',
+				}),
+			});
+			const ctx = createExecutionContext();
+			const response = await worker.fetch(request, env, ctx);
+			await waitOnExecutionContext(ctx);
+
+			expect(response.status).toBe(200);
+			const data = await response.json<{ ok: boolean; error?: { kind: string; message: string } }>();
+			expect(data.ok).toBe(false);
+			expect(data.error?.kind).toBe('transform_threw');
+			expect(data.error?.message).toContain('No PDF link');
 		});
 	});
 

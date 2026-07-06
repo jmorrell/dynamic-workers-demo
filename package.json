@@ -14,6 +14,7 @@
   "devDependencies": {
     "@cf-wasm/photon": "^0.3.6",
     "@cloudflare/vitest-pool-workers": "^0.12.4",
+    "@llamaindex/liteparse-wasm": "^2.4.2",
     "@types/node": "^26.0.0",
     "esbuild": "^0.28.1",
     "typescript": "^5.5.2",
