@@ -496,7 +496,110 @@ describe('POST /api/run handler', () => {
 			const data = await response.json<{ ok: boolean; error?: { kind: string; message: string } }>();
 			expect(data.ok).toBe(false);
 			expect(data.error?.kind).toBe('transform_threw');
-			expect(data.error?.message).toContain('not referenced by the fetched page');
+			expect(data.error?.message).toContain('not reachable within the granted fetch depth from the fetched page');
+		});
+
+		it('custom run with fetchDepth 2 can fetch a link-of-a-link (B then C)', async () => {
+			const linkedB = 'https://example.com/linked-b';
+			const linkedC = 'https://example.com/linked-c';
+			vi.stubGlobal(
+				'fetch',
+				vi.fn((input: RequestInfo | URL) => {
+					const u = typeof input === 'string' ? input : input.toString();
+					if (u === linkedB) {
+						return Promise.resolve(
+							new Response(`<html><body><a href="${linkedC}">c</a></body></html>`, {
+								status: 200,
+								headers: { 'content-type': 'text/html' },
+							}),
+						);
+					}
+					if (u === linkedC) {
+						return Promise.resolve(new Response('LINKED C CONTENT', { status: 200, headers: { 'content-type': 'text/plain' } }));
+					}
+					return Promise.resolve(
+						new Response(`<html><body><a href="${linkedB}">b</a></body></html>`, {
+							status: 200,
+							headers: { 'content-type': 'text/html' },
+						}),
+					);
+				}),
+			);
+
+			const customCode = `export default async (env, input) => {
+				const b = await env.fetch('${linkedB}');
+				const c = await env.fetch('${linkedC}');
+				return { bStatus: b.status, cStatus: c.status };
+			}`;
+
+			const request = new IncomingRequest('http://example.com/api/run', {
+				method: 'POST',
+				headers: { 'CF-Connecting-IP': '203.0.113.223' },
+				body: JSON.stringify({
+					worker: { type: 'custom', customCode },
+					url: 'http://example.com/page',
+					permissions: { fetch: 'page-links', fetchDepth: 2 },
+				}),
+			});
+			const ctx = createExecutionContext();
+			const response = await worker.fetch(request, env, ctx);
+			await waitOnExecutionContext(ctx);
+
+			expect(response.status).toBe(200);
+			const data = await response.json<{ ok: boolean; result?: { bStatus: number; cStatus: number } }>();
+			expect(data.ok).toBe(true);
+			expect(data.result?.bStatus).toBe(200);
+			expect(data.result?.cStatus).toBe(200);
+		});
+
+		it('control: without fetchDepth (default 1), fetching C (a link-of-a-link) throws', async () => {
+			const linkedB = 'https://example.com/linked-b-2';
+			const linkedC = 'https://example.com/linked-c-2';
+			vi.stubGlobal(
+				'fetch',
+				vi.fn((input: RequestInfo | URL) => {
+					const u = typeof input === 'string' ? input : input.toString();
+					if (u === linkedB) {
+						return Promise.resolve(
+							new Response(`<html><body><a href="${linkedC}">c</a></body></html>`, {
+								status: 200,
+								headers: { 'content-type': 'text/html' },
+							}),
+						);
+					}
+					return Promise.resolve(
+						new Response(`<html><body><a href="${linkedB}">b</a></body></html>`, {
+							status: 200,
+							headers: { 'content-type': 'text/html' },
+						}),
+					);
+				}),
+			);
+
+			const customCode = `export default async (env, input) => {
+				await env.fetch('${linkedB}');
+				await env.fetch('${linkedC}');
+				return 'should-not-reach';
+			}`;
+
+			const request = new IncomingRequest('http://example.com/api/run', {
+				method: 'POST',
+				headers: { 'CF-Connecting-IP': '203.0.113.224' },
+				body: JSON.stringify({
+					worker: { type: 'custom', customCode },
+					url: 'http://example.com/page',
+					permissions: { fetch: 'page-links' },
+				}),
+			});
+			const ctx = createExecutionContext();
+			const response = await worker.fetch(request, env, ctx);
+			await waitOnExecutionContext(ctx);
+
+			expect(response.status).toBe(200);
+			const data = await response.json<{ ok: boolean; error?: { kind: string; message: string } }>();
+			expect(data.ok).toBe(false);
+			expect(data.error?.kind).toBe('transform_threw');
+			expect(data.error?.message).toContain('not reachable within the granted fetch depth from the fetched page');
 		});
 
 		it('rejects a custom run with a malformed permissions shape (400 bad_request)', async () => {

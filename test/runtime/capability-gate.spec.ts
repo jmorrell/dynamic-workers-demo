@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { env, createExecutionContext } from 'cloudflare:test';
 import { runInLoader } from '../../src/runtime/loader';
+import { releaseGateRun } from '../../src/runtime/capability-gate';
 import type { RunInput } from '../../src/runtime/types';
 
 function makeInput(overrides: Partial<RunInput> = {}): RunInput {
@@ -91,7 +92,7 @@ describe('CapabilityGate', () => {
 
 			expect(result.type).toBe('success');
 			if (result.type === 'success') {
-				expect(String(result.value)).toContain('not referenced by the fetched page');
+				expect(String(result.value)).toContain('not reachable within the granted fetch depth from the fetched page');
 			}
 		});
 
@@ -225,6 +226,252 @@ describe('CapabilityGate', () => {
 				expect(oks).toHaveLength(5);
 				expect(errs).toHaveLength(2);
 				expect(errs[0]).toContain('5-fetch limit');
+			}
+		});
+	});
+
+	describe('fetchDepth (transitive allowlist growth)', () => {
+		const pageA = 'https://example.com/page-a'; // the fetched page (implicit; not a gate fetch)
+		const pageB = 'https://example.com/page-b'; // depth 1 (in the initial allowlist)
+		const pageC = 'https://example.com/page-c'; // linked only from B
+		const pageD = 'https://example.com/page-d'; // linked only from C
+
+		function stubLinks(linksByUrl: Record<string, string[]>): void {
+			stubGateFetch((url) => {
+				const links = linksByUrl[url] ?? [];
+				const body = `<html><body>${links.map((l) => `<a href="${l}">l</a>`).join('')}</body></html>`;
+				return new Response(body, { status: 200, headers: { 'content-type': 'text/html' } });
+			});
+		}
+
+		it('default depth 1: a URL only linked from a fetched page (not the original allowlist) is denied', async () => {
+			stubLinks({ [pageB]: [pageC] });
+
+			const code = `export default async (env, input) => {
+				await env.fetch('${pageB}');
+				try {
+					await env.fetch('${pageC}');
+					return 'should-not-reach';
+				} catch (e) {
+					return String(e.message || e);
+				}
+			}`;
+
+			const result = await runInLoader(env, makeInput(), code, crypto.randomUUID(), ctx, {
+				permissions: { fetch: 'page-links' },
+				allowedUrls: [pageB],
+			});
+
+			expect(result.type).toBe('success');
+			if (result.type === 'success') {
+				expect(String(result.value)).toContain('not reachable within the granted fetch depth');
+			}
+		});
+
+		it('depth 2: C is denied before B is fetched, then allowed after (growth happens on fetch, not upfront)', async () => {
+			stubLinks({ [pageB]: [pageC] });
+
+			const code = `export default async (env, input) => {
+				let beforeStatus;
+				try {
+					await env.fetch('${pageC}');
+					beforeStatus = 'should-not-reach';
+				} catch (e) {
+					beforeStatus = String(e.message || e);
+				}
+				await env.fetch('${pageB}');
+				const after = await env.fetch('${pageC}');
+				return { beforeStatus, afterStatus: after.status };
+			}`;
+
+			const result = await runInLoader(env, makeInput(), code, crypto.randomUUID(), ctx, {
+				permissions: { fetch: 'page-links', fetchDepth: 2 },
+				allowedUrls: [pageB],
+			});
+
+			expect(result.type).toBe('success');
+			if (result.type === 'success') {
+				const value = result.value as { beforeStatus: string; afterStatus: number };
+				expect(value.beforeStatus).toContain('not reachable within the granted fetch depth');
+				expect(value.afterStatus).toBe(200);
+			}
+		});
+
+		it('depth bound: with depth 2, a URL only linked from C (depth 3) stays denied even after fetching C', async () => {
+			stubLinks({ [pageB]: [pageC], [pageC]: [pageD] });
+
+			const code = `export default async (env, input) => {
+				await env.fetch('${pageB}');
+				await env.fetch('${pageC}');
+				try {
+					await env.fetch('${pageD}');
+					return 'should-not-reach';
+				} catch (e) {
+					return String(e.message || e);
+				}
+			}`;
+
+			const result = await runInLoader(env, makeInput(), code, crypto.randomUUID(), ctx, {
+				permissions: { fetch: 'page-links', fetchDepth: 2 },
+				allowedUrls: [pageB],
+			});
+
+			expect(result.type).toBe('success');
+			if (result.type === 'success') {
+				expect(String(result.value)).toContain('not reachable within the granted fetch depth');
+			}
+		});
+
+		it('a non-ok response does not grow the allowlist', async () => {
+			stubGateFetch((url) => {
+				if (url === pageB) {
+					return new Response(`<html><body><a href="${pageC}">l</a></body></html>`, {
+						status: 500,
+						headers: { 'content-type': 'text/html' },
+					});
+				}
+				return new Response('ok', { status: 200, headers: { 'content-type': 'text/plain' } });
+			});
+
+			const code = `export default async (env, input) => {
+				await env.fetch('${pageB}');
+				try {
+					await env.fetch('${pageC}');
+					return 'should-not-reach';
+				} catch (e) {
+					return String(e.message || e);
+				}
+			}`;
+
+			const result = await runInLoader(env, makeInput(), code, crypto.randomUUID(), ctx, {
+				permissions: { fetch: 'page-links', fetchDepth: 2 },
+				allowedUrls: [pageB],
+			});
+
+			expect(result.type).toBe('success');
+			if (result.type === 'success') {
+				expect(String(result.value)).toContain('not reachable within the granted fetch depth');
+			}
+		});
+
+		it('fetchFile does not grow the allowlist even at depth 2', async () => {
+			stubGateFetch((url) => {
+				if (url === pageB) {
+					return new Response(new Uint8Array([1, 2, 3]), { status: 200, headers: { 'content-type': 'application/octet-stream' } });
+				}
+				return new Response('ok', { status: 200, headers: { 'content-type': 'text/plain' } });
+			});
+
+			const code = `export default async (env, input) => {
+				await env.fetchFile('${pageB}');
+				try {
+					await env.fetch('${pageC}');
+					return 'should-not-reach';
+				} catch (e) {
+					return String(e.message || e);
+				}
+			}`;
+
+			const result = await runInLoader(env, makeInput(), code, crypto.randomUUID(), ctx, {
+				permissions: { fetch: 'page-links', fetchDepth: 2 },
+				allowedUrls: [pageB],
+			});
+
+			expect(result.type).toBe('success');
+			if (result.type === 'success') {
+				expect(String(result.value)).toContain('not reachable within the granted fetch depth');
+			}
+		});
+
+		it('grown allowlist entries are scoped per runId', async () => {
+			stubLinks({ [pageB]: [pageC] });
+
+			const runA = crypto.randomUUID();
+			const codeA = `export default async (env, input) => {
+				await env.fetch('${pageB}');
+				return 'grown';
+			}`;
+			const resultA = await runInLoader(env, makeInput(), codeA, runA, ctx, {
+				permissions: { fetch: 'page-links', fetchDepth: 2 },
+				allowedUrls: [pageB],
+			});
+			expect(resultA.type).toBe('success');
+
+			// A fresh run (different runId) never fetched B, so C stays denied even
+			// though run A grew its OWN allowlist to include C.
+			const runB = crypto.randomUUID();
+			const codeB = `export default async (env, input) => {
+				try {
+					await env.fetch('${pageC}');
+					return 'should-not-reach';
+				} catch (e) {
+					return String(e.message || e);
+				}
+			}`;
+			const resultB = await runInLoader(env, makeInput(), codeB, runB, ctx, {
+				permissions: { fetch: 'page-links', fetchDepth: 2 },
+				allowedUrls: [pageB],
+			});
+
+			expect(resultB.type).toBe('success');
+			if (resultB.type === 'success') {
+				expect(String(resultB.value)).toContain('not reachable within the granted fetch depth');
+			}
+		});
+	});
+
+	describe('releaseGateRun', () => {
+		const pageB = 'https://example.com/release-page-b';
+
+		it('clears both the fetch-count and grown-allowlist maps for a runId', async () => {
+			stubGateFetch(() => new Response('ok', { status: 200, headers: { 'content-type': 'text/plain' } }));
+
+			const runId = crypto.randomUUID();
+			const codeUseUp = `export default async (env, input) => {
+				const outcomes = [];
+				for (let i = 0; i < 5; i++) {
+					const res = await env.fetch('${pageB}');
+					outcomes.push(res.status);
+				}
+				return outcomes;
+			}`;
+			const result1 = await runInLoader(env, makeInput(), codeUseUp, runId, ctx, {
+				permissions: { fetch: 'page-links' },
+				allowedUrls: [pageB],
+			});
+			expect(result1.type).toBe('success');
+			if (result1.type === 'success') {
+				expect((result1.value as number[]).every((s) => s === 200)).toBe(true);
+			}
+
+			// The 6th fetch on this runId would be denied by the count cap — prove it,
+			// then release, then prove a fresh count is available for the SAME runId.
+			const codeOneMore = `export default async (env, input) => {
+				try {
+					await env.fetch('${pageB}');
+					return 'ok';
+				} catch (e) {
+					return String(e.message || e);
+				}
+			}`;
+			const beforeRelease = await runInLoader(env, makeInput(), codeOneMore, runId, ctx, {
+				permissions: { fetch: 'page-links' },
+				allowedUrls: [pageB],
+			});
+			expect(beforeRelease.type).toBe('success');
+			if (beforeRelease.type === 'success') {
+				expect(String(beforeRelease.value)).toContain('5-fetch limit');
+			}
+
+			releaseGateRun(runId);
+
+			const afterRelease = await runInLoader(env, makeInput(), codeOneMore, runId, ctx, {
+				permissions: { fetch: 'page-links' },
+				allowedUrls: [pageB],
+			});
+			expect(afterRelease.type).toBe('success');
+			if (afterRelease.type === 'success') {
+				expect(afterRelease.value).toBe('ok');
 			}
 		});
 	});

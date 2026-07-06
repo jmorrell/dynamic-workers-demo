@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { hashCode, truncateBody, classifyTransformError, classifyLoaderError } from '@/runtime/core';
+import { hashCode, truncateBody, classifyTransformError, classifyLoaderError, clampFetchDepth, isValidPermissions } from '@/runtime/core';
 
 describe('hashCode', () => {
 	it('returns consistent hash for same input', async () => {
@@ -178,5 +178,57 @@ describe('classifyLoaderError', () => {
 		const message = 'CPU LIMIT EXCEEDED';
 		const kind = classifyLoaderError(message);
 		expect(kind).toBe('cpu_exceeded');
+	});
+});
+
+describe('clampFetchDepth', () => {
+	it('defaults to 1 when undefined', () => {
+		expect(clampFetchDepth(undefined)).toBe(1);
+	});
+
+	it('clamps 0 up to the minimum (1)', () => {
+		expect(clampFetchDepth(0)).toBe(1);
+	});
+
+	it('passes through 2 unchanged', () => {
+		expect(clampFetchDepth(2)).toBe(2);
+	});
+
+	it('passes through 3 unchanged', () => {
+		expect(clampFetchDepth(3)).toBe(3);
+	});
+
+	it('clamps 7 down to the maximum (3)', () => {
+		expect(clampFetchDepth(7)).toBe(3);
+	});
+
+	it('rounds 2.6 up to 3', () => {
+		expect(clampFetchDepth(2.6)).toBe(3);
+	});
+
+	it('falls back to 1 for NaN', () => {
+		expect(clampFetchDepth(NaN)).toBe(1);
+	});
+});
+
+describe('isValidPermissions', () => {
+	it('accepts a minimal valid permissions object', () => {
+		expect(isValidPermissions({ fetch: 'none' })).toBe(true);
+	});
+
+	it('accepts fetchDepth as a number', () => {
+		expect(isValidPermissions({ fetch: 'page-links', fetchDepth: 2 })).toBe(true);
+	});
+
+	it('accepts an absent fetchDepth', () => {
+		expect(isValidPermissions({ fetch: 'page-links' })).toBe(true);
+	});
+
+	it('rejects a string fetchDepth', () => {
+		expect(isValidPermissions({ fetch: 'page-links', fetchDepth: '2' })).toBe(false);
+	});
+
+	it('rejects an invalid fetch value', () => {
+		expect(isValidPermissions({ fetch: 'everything' })).toBe(false);
 	});
 });

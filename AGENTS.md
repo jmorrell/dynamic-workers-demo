@@ -11,15 +11,17 @@ library, and an embeddable widget.
 Transforms are `(env, input) => …`: `env` is an explicit capability object (its
 FIRST argument, mirroring how Workers hand bindings to code), `input` is the page
 snapshot. By default `env` is `{}` and the sandbox is fully network-blocked. A
-permission grant (`{ fetch: 'page-links' | 'none'; cpuMs? }`) can unlock
-`env.fetch(url)` / `env.fetchFile(url)`, but they may ONLY reach URLs that the
-originally fetched page references (parsed from the payload — no arbitrary
-spidering). All policy (allowlist, SSRF/IP guards, size/timeout/count caps) lives
-host-side in the `CapabilityGate`, which the sandbox reaches through a
-`ctx.exports` loopback attached as the loaded worker's `env.GATE`. Examples run
-with their registered `permissions`; custom runs supply their own (validated,
-`cpuMs` clamped to `[1,5000]`). See `src/runtime/AGENTS.md` for the gate/extraction
-contracts.
+permission grant (`{ fetch: 'page-links' | 'none'; cpuMs?; fetchDepth? }`) can
+unlock `env.fetch(url)` / `env.fetchFile(url)`, but they may ONLY reach URLs that
+the originally fetched page references (parsed from the payload — no arbitrary
+spidering), unless `fetchDepth` (default 1, clamped `[1,3]`) is raised: at depth
+N, URLs referenced by pages the run has successfully text-fetched become
+fetchable too, transitively, up to N-1 hops out. All policy (allowlist, SSRF/IP
+guards, size/timeout/count caps) lives host-side in the `CapabilityGate`, which
+the sandbox reaches through a `ctx.exports` loopback attached as the loaded
+worker's `env.GATE`. Examples run with their registered `permissions`; custom
+runs supply their own (validated, `cpuMs` clamped to `[1,5000]`). See
+`src/runtime/AGENTS.md` for the gate/extraction contracts.
 
 ## Multi-file examples (wasm modules)
 An example (`ExampleMeta` in `src/examples/registry.ts`) may declare

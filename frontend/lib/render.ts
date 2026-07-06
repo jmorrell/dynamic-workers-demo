@@ -3,6 +3,7 @@
 export type Permissions = {
 	readonly fetch: 'page-links' | 'none';
 	readonly cpuMs?: number;
+	readonly fetchDepth?: number;
 };
 
 // `assetPath` is a URL path served (asset-first) by the same origin, e.g.
@@ -93,6 +94,7 @@ export function buildCustomRunPayload(
 export function formatPermissions(permissions: Permissions | undefined): string | null {
 	if (!permissions || permissions.fetch === 'none') return null;
 	const parts = [`fetch ${permissions.fetch}`];
+	if (typeof permissions.fetchDepth === 'number' && permissions.fetchDepth > 1) parts.push(`depth ${permissions.fetchDepth}`);
 	if (typeof permissions.cpuMs === 'number') parts.push(`cpu ${permissions.cpuMs}ms`);
 	return `permissions: ${parts.join(' · ')}`;
 }

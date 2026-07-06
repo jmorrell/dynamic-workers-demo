@@ -13,6 +13,19 @@ export function clampCpuMs(cpuMs: number | undefined, fallback: number): number 
 	return Math.max(CPU_MS_MIN, Math.min(CPU_MS_MAX, Math.round(cpuMs)));
 }
 
+/** Hard bounds for a permission's transitive-fetch depth, clamped server-side. */
+export const FETCH_DEPTH_MIN = 1;
+export const FETCH_DEPTH_MAX = 3;
+
+/**
+ * Clamps a caller-supplied fetch depth into [FETCH_DEPTH_MIN, FETCH_DEPTH_MAX]. An
+ * absent or non-finite value falls back to 1 (exactly today's page-links behavior).
+ */
+export function clampFetchDepth(value: number | undefined): number {
+	if (typeof value !== 'number' || !Number.isFinite(value)) return FETCH_DEPTH_MIN;
+	return Math.max(FETCH_DEPTH_MIN, Math.min(FETCH_DEPTH_MAX, Math.round(value)));
+}
+
 /** Narrowing validator for a caller-supplied Permissions object (custom runs). */
 export function isValidPermissions(value: unknown): value is Permissions {
 	if (typeof value !== 'object' || value === null) return false;
@@ -20,6 +33,8 @@ export function isValidPermissions(value: unknown): value is Permissions {
 	if (fetch !== 'page-links' && fetch !== 'none') return false;
 	const cpuMs = (value as Record<string, unknown>).cpuMs;
 	if (cpuMs !== undefined && typeof cpuMs !== 'number') return false;
+	const fetchDepth = (value as Record<string, unknown>).fetchDepth;
+	if (fetchDepth !== undefined && typeof fetchDepth !== 'number') return false;
 	return true;
 }
 

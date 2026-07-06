@@ -24,19 +24,25 @@ the target URL, captures the sandbox's logs, and enforces abuse gates.
   and internally calls `transform(userEnv, input)`. `userEnv` is `{}` under the
   default no-network grant; with fetch permission it is
   `{ fetch(url), fetchFile(url) }`, both proxying to the host `CapabilityGate`.
-- **Permissions**: `type Permissions = { fetch: 'page-links' | 'none'; cpuMs? }`.
-  Default `{ fetch: 'none' }`; `cpuMs` defaults to `CPU_LIMIT_MS` (50) and is
-  clamped to `[1, 5000]` (`clampCpuMs` in core). Example runs use the example's
-  registered permissions (request-supplied ignored); custom runs use the
-  request's, validated/clamped (bad shape → 400).
+- **Permissions**: `type Permissions = { fetch: 'page-links' | 'none'; cpuMs?;
+  fetchDepth? }`. Default `{ fetch: 'none' }`; `cpuMs` defaults to `CPU_LIMIT_MS`
+  (50) and is clamped to `[1, 5000]` (`clampCpuMs` in core); `fetchDepth`
+  (meaningful only with `fetch: 'page-links'`) defaults to 1 and is clamped to
+  `[1, 3]` (`clampFetchDepth` in core). Example runs use the example's registered
+  permissions (request-supplied ignored); custom runs use the request's,
+  validated/clamped (bad shape → 400).
 - **Gate contract**: `CapabilityGate` (WorkerEntrypoint, reached via
-  `ctx.exports.CapabilityGate({ props: { runId, allowedUrls } })`, attached as the
-  loaded worker's `env.GATE`). `fetchText(url) → { status, contentType, body,
-  truncated }` (2 MiB, UTF-8-boundary truncation); `fetchFile(url) → { status,
-  contentType, bytes, truncated }` (20 MiB, byte truncation). Both require the
-  normalized URL to be an EXACT member of `props.allowedUrls` (URLs referenced by
-  the fetched page — no arbitrary spidering), pass the SSRF host guard
-  (`guardFetchUrl`), obey an 8s timeout, and share a per-run 5-fetch cap.
+  `ctx.exports.CapabilityGate({ props: { runId, allowedUrls, fetchDepth } })`,
+  attached as the loaded worker's `env.GATE`). `fetchText(url) → { status,
+  contentType, body, truncated }` (2 MiB, UTF-8-boundary truncation); `fetchFile(url)
+  → { status, contentType, bytes, truncated }` (20 MiB, byte truncation). Both
+  require the normalized URL to be reachable on the allowlist — URLs referenced by
+  the fetched page, plus — up to `fetchDepth` — URLs referenced by pages the run has
+  successfully text-fetched (no arbitrary spidering beyond that bound) — pass the
+  SSRF host guard (`guardFetchUrl`), obey an 8s timeout, and share a per-run 5-fetch
+  cap. Only `fetchText` grows the allowlist on a successful (`response.ok`) fetch,
+  by extracting the served body's links at the next depth; `fetchFile` never does
+  (binary responses, text-only extraction).
 - **URL extraction**: `extractLinkedUrls` (pure, `extract-urls.ts`) parses HTML
   (linkedom, host-side) URL-bearing attributes (incl. `srcset` candidates and
   absolute-URL `meta[content]`) or, for JSON/text, regex-matches absolute http(s)
@@ -139,6 +145,12 @@ the target URL, captures the sandbox's logs, and enforces abuse gates.
 - Gate fetch caps: `fetchText` 2 MiB (UTF-8-boundary), `fetchFile` 20 MiB (byte),
   8s timeout, 5 gate fetches per run (host-side tally keyed by runId — workerd
   instantiates a fresh entrypoint per RPC, so this cannot be instance state).
+  Allowlist growth from `fetchDepth` is capped at `GATE_MAX_GROWN_URLS` (5000)
+  grown entries per run — a memory bound only; the real reachability bound is the
+  5-fetch cap (at most 5 pages can ever contribute grown URLs). `releaseGateRun(runId)`
+  (called from `src/index.ts`'s `handleRun` after logs are read) deletes a run's
+  entries from both the fetch-count and grown-allowlist maps — best-effort hygiene;
+  correctness never depends on it running.
 - `guardFetchUrl` (core, pure) blocks non-http(s) and private/loopback/link-local
   IP literals + localhost; used by the gate AND by `fetchTarget` (pre-fetch on
   the requested URL, and again post-fetch on `response.url` if it differs —

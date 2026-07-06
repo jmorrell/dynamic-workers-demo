@@ -22,10 +22,16 @@ export type UserWorker =
  * `env.fetch`/`env.fetchFile`, but only for URLs referenced by the originally
  * fetched page (host-enforced by the CapabilityGate). `cpuMs` is the sandbox CPU
  * budget; when absent the loader uses CPU_LIMIT_MS, and it is clamped to [1,5000].
+ * `fetchDepth` is meaningful only alongside `fetch: 'page-links'`: it grows the
+ * allowlist transitively — depth 1 (default) is exactly "URLs referenced by the
+ * fetched page"; depth N also allows URLs referenced by pages the run has
+ * successfully text-fetched, up to N-1 hops out. Clamped to [1,3] (`clampFetchDepth`
+ * in core).
  */
 export type Permissions = {
 	fetch: 'page-links' | 'none';
 	cpuMs?: number;
+	fetchDepth?: number;
 };
 
 export type RunRequestBody = {

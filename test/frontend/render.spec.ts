@@ -324,5 +324,21 @@ describe('render helpers', () => {
 		it('includes a cpu budget when present', () => {
 			expect(formatPermissions({ fetch: 'page-links', cpuMs: 500 })).toBe('permissions: fetch page-links · cpu 500ms');
 		});
+
+		it('omits the depth segment when fetchDepth is absent', () => {
+			expect(formatPermissions({ fetch: 'page-links' })).toBe('permissions: fetch page-links');
+		});
+
+		it('omits the depth segment when fetchDepth is 1 (the default)', () => {
+			expect(formatPermissions({ fetch: 'page-links', fetchDepth: 1 })).toBe('permissions: fetch page-links');
+		});
+
+		it('includes a depth segment when fetchDepth is greater than 1', () => {
+			expect(formatPermissions({ fetch: 'page-links', fetchDepth: 2 })).toBe('permissions: fetch page-links · depth 2');
+		});
+
+		it('orders depth before cpu when both are present', () => {
+			expect(formatPermissions({ fetch: 'page-links', fetchDepth: 2, cpuMs: 500 })).toBe('permissions: fetch page-links · depth 2 · cpu 500ms');
+		});
 	});
 });

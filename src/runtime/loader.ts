@@ -1,4 +1,4 @@
-import { classifyLoaderError, clampCpuMs, hashCode } from './core';
+import { classifyLoaderError, clampCpuMs, clampFetchDepth, hashCode } from './core';
 import type { Permissions, RunInput, RunResult } from './types';
 import { HARNESS_SOURCE } from './harness-source';
 
@@ -99,7 +99,7 @@ export async function runInLoader(
 			// ctx.exports is typed {} until GlobalProps is generated; narrow the loopback bindings.
 			const exports = ctx.exports as {
 				LogTailer: (o: { props: { runId: string } }) => Fetcher;
-				CapabilityGate: (o: { props: { runId: string; allowedUrls: ReadonlyArray<string> } }) => Fetcher;
+				CapabilityGate: (o: { props: { runId: string; allowedUrls: ReadonlyArray<string>; fetchDepth: number } }) => Fetcher;
 			};
 
 			// The loaded worker's env carries at most the CapabilityGate loopback —
@@ -109,7 +109,11 @@ export async function runInLoader(
 			// unaffected by globalOutbound); INPUT is passed to run() per invocation.
 			const workerEnv: Record<string, unknown> =
 				permissions?.fetch === 'page-links'
-					? { GATE: exports.CapabilityGate({ props: { runId, allowedUrls: allowedUrls ?? [] } }) }
+					? {
+							GATE: exports.CapabilityGate({
+								props: { runId, allowedUrls: allowedUrls ?? [], fetchDepth: clampFetchDepth(permissions.fetchDepth) },
+							}),
+						}
 					: {};
 
 			const workerCode: WorkerLoaderWorkerCode = {

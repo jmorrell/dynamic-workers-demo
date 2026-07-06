@@ -3,6 +3,7 @@ import { runInLoader } from './runtime/loader';
 import { transpileUserCode, selectReferencedDeps } from './runtime/transpile';
 import { extractLinkedUrls } from './runtime/extract-urls';
 import { isValidPermissions, validateCustomModules } from './runtime/core';
+import { releaseGateRun } from './runtime/capability-gate';
 import type { Permissions, RunErrorKind, RunRequestBody, UserWorker } from './runtime/types';
 import { listExamples, getExample, type ExampleModule } from './examples/manifest';
 import { SHARED_DEP_SPECIFIERS } from './examples/registry';
@@ -296,6 +297,12 @@ async function handleRun(request: Request, env: Env, ctx: ExecutionContext): Pro
 
 	// Read logs from LogSession
 	const logs = await env.LOG_SESSION.get(env.LOG_SESSION.idFromName(runId)).getLogs(LOG_READ_TIMEOUT_MS);
+
+	// Best-effort in-memory hygiene for the gate's module-scoped per-run maps
+	// (fetchCounts, grown allowlist) — see releaseGateRun's doc comment. Runs
+	// regardless of result.type so a transform_threw/loader_failed run still
+	// releases its entries.
+	releaseGateRun(runId);
 
 	return new Response(
 		JSON.stringify({
