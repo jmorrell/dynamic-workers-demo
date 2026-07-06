@@ -7,6 +7,7 @@ import * as esbuild from 'esbuild';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const repoRoot = path.resolve(__dirname, '..');
+const modulesOutDir = path.resolve(repoRoot, 'public/modules');
 
 /**
  * Load EXAMPLE_REGISTRY from src/examples/registry.ts (the single source of
@@ -175,10 +176,23 @@ export const GENERATED_DEP_MODULES = ${JSON.stringify(entries, null, '\t')} as c
 }
 
 /**
+ * Copy every registry module's binary to public/modules/<id>/<name> (a static
+ * asset served by the ASSETS binding — generated-but-committed, same
+ * convention as public/app.js). Cleaned first so an example that drops or
+ * renames a module doesn't leave an orphaned binary behind.
+ */
+function cleanModulesDir() {
+	fs.rmSync(modulesOutDir, { recursive: true, force: true });
+	fs.mkdirSync(modulesOutDir, { recursive: true });
+}
+
+/**
  * Build all examples and generate manifest
  */
 async function buildManifest() {
 	console.log('Building example manifest...');
+
+	cleanModulesDir();
 
 	const EXAMPLE_REGISTRY = await loadRegistry();
 	const manifestEntries = [];
@@ -190,15 +204,18 @@ async function buildManifest() {
 			const code = await bundleExample(example.entry, Boolean(example.modules?.length));
 
 			// Non-JS modules (currently only wasm) the example's code imports by
-			// relative specifier: read the committed binary and base64-encode it
-			// into the manifest so both the frontend (editor tabs) and src/index.ts
-			// (loader injection for example runs) can consume it without touching disk.
+			// relative specifier: copy the committed binary to
+			// public/modules/<id>/<name> and record the URL path as `assetPath` —
+			// both the frontend (editor tabs) and src/index.ts (loader injection for
+			// example runs) fetch the bytes from there rather than carrying base64
+			// in the manifest (which used to bloat it to ~12 MB).
 			const modules = example.modules?.length
-				? example.modules.map((m) => ({
-						name: m.name,
-						kind: m.kind,
-						base64: fs.readFileSync(path.resolve(repoRoot, m.file)).toString('base64'),
-					}))
+				? example.modules.map((m) => {
+						const exampleDir = path.resolve(modulesOutDir, example.id);
+						fs.mkdirSync(exampleDir, { recursive: true });
+						fs.copyFileSync(path.resolve(repoRoot, m.file), path.resolve(exampleDir, m.name));
+						return { name: m.name, kind: m.kind, assetPath: `/modules/${example.id}/${m.name}` };
+					})
 				: undefined;
 
 			manifestEntries.push({

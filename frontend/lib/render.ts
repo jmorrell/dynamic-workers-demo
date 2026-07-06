@@ -5,7 +5,10 @@ export type Permissions = {
 	readonly cpuMs?: number;
 };
 
-export type ExampleModule = { readonly name: string; readonly kind: 'wasm'; readonly base64: string };
+// `assetPath` is a URL path served (asset-first) by the same origin, e.g.
+// '/modules/image-hash/photon.wasm' — module bytes are fetched lazily per
+// example from there, see ensureModules in main.ts.
+export type ExampleModule = { readonly name: string; readonly kind: 'wasm'; readonly assetPath: string };
 
 export type Example = {
 	readonly id: string;
@@ -23,14 +26,16 @@ export type EditorTab = { readonly id: string; readonly label: string; readonly 
 
 // Builds the pristine tab set for a selected example: the script tab first
 // (label 'transform.ts'), then one tab per declared module. No example (or no
-// modules) yields just the script tab.
-export function exampleTabs(example: Example | undefined): Array<EditorTab> {
+// modules) yields just the script tab. Module content comes from
+// `moduleContents` (keyed by module name) when supplied — the base64 is
+// fetched lazily (see ensureModules in main.ts) — or '' before it loads.
+export function exampleTabs(example: Example | undefined, moduleContents?: ReadonlyMap<string, string>): Array<EditorTab> {
 	const scriptTab: EditorTab = { id: 'script', label: 'transform.ts', kind: 'script', content: example?.source ?? '' };
 	const moduleTabs: Array<EditorTab> = (example?.modules ?? []).map((m) => ({
 		id: m.name,
 		label: m.name,
 		kind: 'wasm',
-		content: m.base64,
+		content: moduleContents?.get(m.name) ?? '',
 	}));
 	return [scriptTab, ...moduleTabs];
 }
@@ -41,6 +46,21 @@ export function exampleTabs(example: Example | undefined): Array<EditorTab> {
 export function isTabSetDirty(pristineTabs: ReadonlyArray<EditorTab>, currentContents: ReadonlyMap<string, string>): boolean {
 	if (pristineTabs.length === 0) return true;
 	return pristineTabs.some((tab) => currentContents.get(tab.id) !== tab.content);
+}
+
+// Base64-encodes raw bytes for wasm tab content / a custom-run payload
+// (module bytes are fetched from a static asset — see ensureModules in
+// main.ts — and encoded here rather than shipped as base64 from the server).
+// String.fromCharCode.apply has an argument-count limit well under a
+// multi-MB buffer's length, so this chunks the conversion (0x8000 bytes at a
+// time) before handing the whole binary string to btoa.
+export function bytesToBase64(bytes: Uint8Array): string {
+	const chunkSize = 0x8000;
+	let binary = '';
+	for (let offset = 0; offset < bytes.length; offset += chunkSize) {
+		binary += String.fromCharCode(...bytes.subarray(offset, offset + chunkSize));
+	}
+	return btoa(binary);
 }
 
 export type CustomRunModule = { readonly name: string; readonly kind: 'wasm'; readonly base64: string };

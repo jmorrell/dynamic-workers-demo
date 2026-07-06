@@ -7,9 +7,11 @@ import {
 	exampleTabs,
 	isTabSetDirty,
 	buildCustomRunPayload,
+	bytesToBase64,
 	type RunResponse,
 	type Example,
 	type EditorTab,
+	type CustomRunModule,
 } from './lib/render';
 import { EditorView, basicSetup } from 'codemirror';
 import { keymap } from '@codemirror/view';
@@ -119,6 +121,66 @@ function setEditorText(code: string): void {
 
 function selectedExample(): Example | undefined {
 	return state.selectedExampleId ? state.examples.find((ex) => ex.id === state.selectedExampleId) : undefined;
+}
+
+// Per-example module fetch, cached so repeated selects/runs don't re-fetch.
+// The listing carries assetPath but not bytes (see manifest.ts) — a dirty run
+// or a wasm editor tab needs the real bytes, fetched lazily (asset-first
+// routing: run_worker_first only covers /api/*, so this hits the CDN, not the
+// worker) and base64-encoded client-side.
+const moduleCache = new Map<string, Promise<Array<CustomRunModule>>>();
+
+function ensureModules(example: Example): Promise<Array<CustomRunModule>> {
+	const cached = moduleCache.get(example.id);
+	if (cached) return cached;
+
+	const promise = Promise.all(
+		(example.modules ?? []).map(async (m): Promise<CustomRunModule> => {
+			const response = await fetch(m.assetPath);
+			if (!response.ok) {
+				throw new Error(`Failed to load module ${m.assetPath}: HTTP ${response.status}`);
+			}
+			const bytes = new Uint8Array(await response.arrayBuffer());
+			return { name: m.name, kind: m.kind, base64: bytesToBase64(bytes) };
+		}),
+	);
+
+	// A failed fetch shouldn't poison the cache — delete so a later call retries.
+	promise.catch(() => moduleCache.delete(example.id));
+	moduleCache.set(example.id, promise);
+	return promise;
+}
+
+// Swaps loaded module base64 into the live tab state. Idempotent and safe to
+// call from both the select-time `.then` and the run-time `await` path: bails
+// if the example has since been deselected, and only overwrites a wasm tab
+// still sitting on its pre-load placeholder — an already-edited tab is left
+// alone (it just stays dirty, same as editing base64 directly).
+function applyLoadedModules(exampleId: string, modules: ReadonlyArray<CustomRunModule>): void {
+	if (state.selectedExampleId !== exampleId) return;
+	const example = selectedExample();
+	if (!example) return;
+
+	const contentByName = new Map(modules.map((m) => [m.name, m.base64]));
+	const loadedTabs = exampleTabs(example, contentByName);
+
+	for (const tab of loadedTabs) {
+		if (tab.kind !== 'wasm') continue;
+		const placeholder = state.pristineTabs.find((t) => t.id === tab.id)?.content;
+		// The ACTIVE tab's tabContents entry is stale while it's being edited
+		// (see State docs) — read live text so an in-progress edit isn't clobbered.
+		const current = state.activeTabId === tab.id ? editorText() : state.tabContents.get(tab.id);
+		if (current === placeholder) {
+			state.tabContents.set(tab.id, tab.content);
+			if (state.activeTabId === tab.id) setEditorText(tab.content);
+		}
+	}
+
+	state.pristineTabs = loadedTabs;
+	state.tabs = loadedTabs;
+
+	updateEditorStatus();
+	updateRunButton();
 }
 
 // A fresh snapshot of every tab's current text: state.tabContents for every
@@ -295,6 +357,13 @@ function selectExample(selectedId: string | null): void {
 
 	if (example) {
 		displaySuggestedUrls(example.suggestedUrls);
+		// Tabs render immediately with '' wasm placeholders; swap in the real
+		// base64 once it loads, as long as this example is still selected.
+		if (example.modules?.length) {
+			ensureModules(example)
+				.then((modules) => applyLoadedModules(example.id, modules))
+				.catch((error) => console.error('Failed to load example modules:', error));
+		}
 	} else {
 		suggestedUrlsSection.style.display = 'none';
 	}
@@ -366,6 +435,27 @@ async function onRunClick(): Promise<void> {
 	if (!isDirty() && state.selectedExampleId) {
 		payload.worker = { type: 'example', exampleId: state.selectedExampleId };
 	} else {
+		// A dirty/custom run must ship real module bytes, not the '' placeholder
+		// tabs render with before ensureModules resolves — wait for it here if
+		// there's a selected example with wasm tabs still in play.
+		const runExample = selectedExample();
+		if (runExample && state.tabs.some((t) => t.kind === 'wasm')) {
+			try {
+				const modules = await ensureModules(runExample);
+				applyLoadedModules(runExample.id, modules);
+			} catch (error) {
+				resultsSection.className = 'error';
+				resultsTitleEl.textContent = 'Error';
+				resultsBodyEl.textContent = `Failed to load example modules: ${String(error)}`;
+				logsContainerEl.innerHTML = '';
+				timingInfoEl.innerHTML = '';
+				resultsSection.classList.remove('empty');
+				state.isRunning = false;
+				updateRunButton();
+				return;
+			}
+		}
+
 		const built = buildCustomRunPayload(state.tabs, currentTabContents());
 		payload.worker = { type: 'custom', ...built };
 		// A dirty run drops out of the example path, so the server no longer sees

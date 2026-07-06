@@ -28,14 +28,20 @@ relative specifier (e.g. `import mod from './add.wasm'`). `file` is a
 repo-relative path to a binary (e.g. `src/examples/add.wasm`, the 41-byte
 `wasm-add` example's module) — either committed under `src/examples/` or
 package-shipped under `node_modules/` (version pinned by the lockfile, e.g.
-`image-hash`'s `@cf-wasm/photon` binary); the build reads + base64-encodes it
-into the manifest entry. `scripts/build-examples.mjs` bundles such an example with
-esbuild `external: ['*.wasm']` so the relative import survives verbatim into
-`code` (esbuild never tries to load the binary itself — the loader injects the
-real module at Dynamic Worker load time). The frontend editor renders one tab
-per module (base64 text) alongside the script tab; `src/index.ts` decodes and
-injects module base64 for both example and custom runs via `runInLoader`'s
-`wasmModules` (see `src/runtime/AGENTS.md`).
+`image-hash`'s `@cf-wasm/photon` binary); the build copies it to
+`public/modules/<exampleId>/<name>` (a static asset served by `ASSETS`,
+generated-but-committed like `public/app.js`) and records the URL path as
+`assetPath` in the manifest entry — no base64 in the manifest.
+`scripts/build-examples.mjs` bundles such an example with esbuild `external:
+['*.wasm']` so the relative import survives verbatim into `code` (esbuild never
+tries to load the binary itself — the loader injects the real module at Dynamic
+Worker load time). The frontend editor renders one tab per module alongside the
+script tab, lazily fetching `assetPath` (directly from the CDN — asset routing
+covers everything outside `run_worker_first: ["/api/*"]`) and base64-encoding
+the bytes client-side for tab content / a dirty custom-run payload (see
+`frontend/lib/render.ts`'s `bytesToBase64`); `src/index.ts` fetches the same
+`assetPath` host-side via the `ASSETS` binding for example runs and injects the
+bytes via `runInLoader`'s `wasmModules` (see `src/runtime/AGENTS.md`).
 
 ## Tech Stack
 - TypeScript on Cloudflare Workers (`nodejs_compat`)
@@ -70,6 +76,9 @@ injects module base64 for both example and custom runs via `runInLoader`'s
 - `src/examples/deps.generated.ts` - from `scripts/build-examples.mjs`; bundled ESM
   source for each shared dependency an edited example imports (see
   `SHARED_DEP_SPECIFIERS` in `src/examples/registry.ts`), keyed by import specifier.
+- `public/modules/<exampleId>/<name>` - from `scripts/build-examples.mjs`; raw wasm
+  binaries copied from each example's registered `modules[].file` (the dir is
+  cleaned first so removed/renamed modules don't leave orphans).
 - `public/app.js` - from `scripts/build-frontend.mjs`.
 - `worker-configuration.d.ts` - from `wrangler types`.
 

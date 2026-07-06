@@ -51,16 +51,22 @@ describe('manifest', () => {
 			}
 		});
 
-		it('includes the wasm-add example with its module base64', () => {
+		it('includes the wasm-add example with its module assetPath', () => {
 			const examples = listExamples();
 			const wasmAdd = examples.find((e) => e.id === 'wasm-add');
 			expect(wasmAdd).toBeDefined();
 			expect(wasmAdd?.modules).toHaveLength(1);
-			expect(wasmAdd?.modules?.[0]).toEqual({
-				name: 'add.wasm',
-				kind: 'wasm',
-				base64: 'AGFzbQEAAAABBwFgAn9/AX8DAgEABwcBA2FkZAAACgkBBwAgACABags=',
-			});
+			expect(wasmAdd?.modules?.[0]).toEqual({ name: 'add.wasm', kind: 'wasm', assetPath: '/modules/wasm-add/add.wasm' });
+		});
+
+		it('never includes module base64 for any listed example (bytes are static assets)', () => {
+			const examples = listExamples();
+			for (const example of examples) {
+				for (const module of example.modules ?? []) {
+					expect('base64' in module).toBe(false);
+					expect(module.assetPath).toMatch(/^\/modules\//);
+				}
+			}
 		});
 	});
 
@@ -76,6 +82,12 @@ describe('manifest', () => {
 		it('returns undefined for unknown id', () => {
 			const example = getExample('nonexistent');
 			expect(example).toBeUndefined();
+		});
+
+		it('exposes the same assetPath as listExamples() for wasm-add (no separate server-only shape)', () => {
+			const example = getExample('wasm-add');
+			expect(example?.modules).toHaveLength(1);
+			expect(example?.modules?.[0]).toEqual({ name: 'add.wasm', kind: 'wasm', assetPath: '/modules/wasm-add/add.wasm' });
 		});
 	});
 });

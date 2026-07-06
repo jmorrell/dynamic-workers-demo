@@ -2,9 +2,9 @@ import { fetchTarget } from './runtime/fetch-target';
 import { runInLoader } from './runtime/loader';
 import { transpileUserCode, selectReferencedDeps } from './runtime/transpile';
 import { extractLinkedUrls } from './runtime/extract-urls';
-import { isValidPermissions, validateCustomModules, decodeBase64 } from './runtime/core';
+import { isValidPermissions, validateCustomModules } from './runtime/core';
 import type { Permissions, RunErrorKind, RunRequestBody, UserWorker } from './runtime/types';
-import { listExamples, getExample } from './examples/manifest';
+import { listExamples, getExample, type ExampleModule } from './examples/manifest';
 import { SHARED_DEP_SPECIFIERS } from './examples/registry';
 import { GENERATED_DEP_MODULES } from './examples/deps.generated';
 import { LogSession } from './runtime/log-session';
@@ -55,6 +55,29 @@ async function handleConfig(request: Request, env: Env): Promise<Response> {
 		status: 200,
 		headers: { 'content-type': 'application/json' },
 	});
+}
+
+/**
+ * Fetches an example's wasm module bytes host-side via the ASSETS binding
+ * (public/modules/<id>/<name>, generated-but-committed — see
+ * scripts/build-examples.mjs). A dummy origin is required because Fetcher#fetch
+ * needs a well-formed absolute URL; only the pathname is meaningful for asset
+ * routing. Shouldn't fail for a committed example, but a bad/missing asset
+ * fails the run readably (loader_failed) rather than throwing.
+ */
+async function loadExampleWasmModules(
+	env: Env,
+	modules: ReadonlyArray<ExampleModule>,
+): Promise<{ ok: true; modules: Record<string, Uint8Array> } | { ok: false; error: { kind: RunErrorKind; message: string } }> {
+	const wasmModules: Record<string, Uint8Array> = {};
+	for (const m of modules) {
+		const res = await env.ASSETS.fetch(new URL(m.assetPath, 'https://assets.local'));
+		if (!res.ok) {
+			return { ok: false, error: { kind: 'loader_failed', message: `Failed to load module asset ${m.assetPath}: HTTP ${res.status}` } };
+		}
+		wasmModules[m.name] = new Uint8Array(await res.arrayBuffer());
+	}
+	return { ok: true, modules: wasmModules };
 }
 
 async function handleRun(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
@@ -169,13 +192,25 @@ async function handleRun(request: Request, env: Env, ctx: ExecutionContext): Pro
 		permissions = example.permissions;
 		// The bundled example code retains its relative wasm import (e.g.
 		// './add.wasm' — see scripts/build-examples.mjs external:['*.wasm']), so an
-		// example run needs the same module injection a custom run would.
+		// example run needs the same module injection a custom run would. Bytes
+		// live as static assets (public/modules/<id>/<name>, generated-but-committed
+		// — see scripts/build-examples.mjs) rather than base64 in the manifest.
 		if (example.modules?.length) {
-			wasmModules = {};
-			for (const m of example.modules) {
-				const bytes = decodeBase64(m.base64);
-				if (bytes) wasmModules[m.name] = bytes;
+			const loaded = await loadExampleWasmModules(env, example.modules);
+			if (!loaded.ok) {
+				return new Response(
+					JSON.stringify({
+						ok: false,
+						error: loaded.error,
+						logs: [],
+						logsTruncated: false,
+						timingMs: 0,
+						inputTruncated: false,
+					}),
+					{ status: 200, headers: { 'content-type': 'application/json' } },
+				);
 			}
+			wasmModules = loaded.modules;
 		}
 	} else {
 		// Custom runs may declare their own permissions; reject a malformed shape.

@@ -7,6 +7,17 @@ import dummyPdfBase64 from './examples/fixtures/dummy-pdf.base64.txt?raw';
 
 const IncomingRequest = Request<unknown, IncomingRequestCfProperties>;
 
+// Fetches a module's bytes via the ASSETS binding (same host-side path
+// src/index.ts's example-run wasmModules injection uses) and base64-encodes
+// them — a stand-in for what the frontend does client-side against the same
+// asset, now that manifest module entries carry assetPath instead of base64.
+async function fetchModuleBase64(assetPath: string): Promise<string> {
+	const res = await env.ASSETS.fetch(new URL(assetPath, 'https://assets.local'));
+	expect(res.ok).toBe(true);
+	const bytes = new Uint8Array(await res.arrayBuffer());
+	return Buffer.from(bytes).toString('base64');
+}
+
 function stubTargetFetch(body: string, contentType = 'text/html'): void {
 	vi.stubGlobal(
 		'fetch',
@@ -41,6 +52,23 @@ describe('GET /api/examples handler', () => {
 		for (const example of data) {
 			expect('code' in example).toBe(false);
 		}
+	});
+
+	it('never ships module base64 in the listing (module bytes are static assets)', async () => {
+		const request = new IncomingRequest('http://example.com/api/examples', { method: 'GET' });
+		const ctx = createExecutionContext();
+		const response = await worker.fetch(request, env, ctx);
+		await waitOnExecutionContext(ctx);
+
+		const body = await response.text();
+		// Regression guard: shipping wasm base64 in the listing previously blew
+		// this up to ~8.5 MB for every widget load.
+		expect(body.length).toBeLessThan(100 * 1024);
+
+		const data = JSON.parse(body) as Array<{ id: string; modules?: Array<{ name: string; kind: string; assetPath?: string; base64?: string }> }>;
+		const imageHash = data.find((e) => e.id === 'image-hash');
+		expect(imageHash?.modules).toHaveLength(1);
+		expect(imageHash?.modules?.[0]).toEqual({ name: 'photon.wasm', kind: 'wasm', assetPath: '/modules/image-hash/photon.wasm' });
 	});
 
 	it('returns 405 for POST /api/examples', async () => {
@@ -682,6 +710,7 @@ export default async (env, input) => {
 			const photonModule = example.modules?.find((m) => m.name === 'photon.wasm');
 			expect(photonModule).toBeDefined();
 			if (!photonModule) return;
+			const photonBase64 = await fetchModuleBase64(photonModule.assetPath);
 
 			const request = new IncomingRequest('http://example.com/api/run', {
 				method: 'POST',
@@ -690,7 +719,7 @@ export default async (env, input) => {
 					worker: {
 						type: 'custom',
 						customCode: example.source,
-						modules: [{ name: 'photon.wasm', kind: 'wasm', base64: photonModule.base64 }],
+						modules: [{ name: 'photon.wasm', kind: 'wasm', base64: photonBase64 }],
 					},
 					url: 'http://example.com/page',
 					permissions: { fetch: 'page-links', cpuMs: 2000 },

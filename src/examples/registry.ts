@@ -15,10 +15,12 @@ export type ExampleMeta = {
 	readonly permissions?: Permissions;
 	// Non-JS modules the loader must inject alongside the bundled code (e.g. a
 	// wasm binary the entry imports via a relative specifier). `file` is a
-	// repo-relative path to the binary, read + base64-encoded at build time
-	// (scripts/build-examples.mjs) into the manifest entry. May be a committed
-	// binary under src/examples/, or a package-shipped one under node_modules/
-	// (version pinned by the lockfile, e.g. @cf-wasm/photon's wasm binary).
+	// repo-relative path to the binary; scripts/build-examples.mjs copies it to
+	// public/modules/<id>/<name> (a static asset, generated-but-committed) and
+	// records the URL path as `assetPath` in the manifest entry. May be a
+	// committed binary under src/examples/, or a package-shipped one under
+	// node_modules/ (version pinned by the lockfile, e.g. @cf-wasm/photon's wasm
+	// binary).
 	readonly modules?: ReadonlyArray<{ readonly name: string; readonly kind: 'wasm'; readonly file: string }>;
 };
 

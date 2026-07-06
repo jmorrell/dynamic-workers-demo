@@ -1,7 +1,10 @@
 import { GENERATED_MANIFEST } from './manifest.generated';
 import type { Permissions } from '../runtime/types';
 
-export type ExampleModule = { readonly name: string; readonly kind: 'wasm'; readonly base64: string };
+// `assetPath` is a URL path served by the ASSETS binding (e.g.
+// '/modules/image-hash/photon.wasm') — the binary itself lives under
+// public/modules/ (generated-but-committed, see scripts/build-examples.mjs).
+export type ExampleModule = { readonly name: string; readonly kind: 'wasm'; readonly assetPath: string };
 
 export type Example = {
 	readonly id: string;
@@ -16,8 +19,9 @@ export type Example = {
 	readonly permissions?: Permissions;
 	// Non-JS modules (currently only wasm) the example's bundled code imports by
 	// relative specifier. Exposed to the frontend via listExamples so the editor
-	// can render one tab per module; src/index.ts decodes these for example runs
-	// (the bundled code retains its './add.wasm'-style import).
+	// can render one tab per module (fetching assetPath lazily); src/index.ts
+	// fetches these via the ASSETS binding for example runs (the bundled code
+	// retains its './add.wasm'-style import).
 	readonly modules?: ReadonlyArray<ExampleModule>;
 };
 

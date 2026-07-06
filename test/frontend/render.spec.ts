@@ -8,6 +8,7 @@ import {
 	exampleTabs,
 	isTabSetDirty,
 	buildCustomRunPayload,
+	bytesToBase64,
 	type Example,
 } from '../../frontend/lib/render';
 
@@ -181,16 +182,32 @@ describe('render helpers', () => {
 			expect(tabs).toEqual([{ id: 'script', label: 'transform.ts', kind: 'script', content: '' }]);
 		});
 
-		it('appends one tab per module, in order', () => {
+		it('appends one tab per module, in order, with empty content when no contents map is supplied', () => {
 			const example: Example = {
 				id: '1',
 				title: 'x',
 				description: 'd',
 				suggestedUrls: [],
 				source: 'code',
-				modules: [{ name: 'add.wasm', kind: 'wasm', base64: 'AAAA' }],
+				modules: [{ name: 'add.wasm', kind: 'wasm', assetPath: '/modules/x/add.wasm' }],
 			};
 			const tabs = exampleTabs(example);
+			expect(tabs).toEqual([
+				{ id: 'script', label: 'transform.ts', kind: 'script', content: 'code' },
+				{ id: 'add.wasm', label: 'add.wasm', kind: 'wasm', content: '' },
+			]);
+		});
+
+		it('uses the supplied contents map, keyed by module name, when provided', () => {
+			const example: Example = {
+				id: '1',
+				title: 'x',
+				description: 'd',
+				suggestedUrls: [],
+				source: 'code',
+				modules: [{ name: 'add.wasm', kind: 'wasm', assetPath: '/modules/x/add.wasm' }],
+			};
+			const tabs = exampleTabs(example, new Map([['add.wasm', 'AAAA']]));
 			expect(tabs).toEqual([
 				{ id: 'script', label: 'transform.ts', kind: 'script', content: 'code' },
 				{ id: 'add.wasm', label: 'add.wasm', kind: 'wasm', content: 'AAAA' },
@@ -199,14 +216,17 @@ describe('render helpers', () => {
 	});
 
 	describe('isTabSetDirty', () => {
-		const pristine = exampleTabs({
-			id: '1',
-			title: 'x',
-			description: 'd',
-			suggestedUrls: [],
-			source: 'code',
-			modules: [{ name: 'add.wasm', kind: 'wasm', base64: 'AAAA' }],
-		});
+		const pristine = exampleTabs(
+			{
+				id: '1',
+				title: 'x',
+				description: 'd',
+				suggestedUrls: [],
+				source: 'code',
+				modules: [{ name: 'add.wasm', kind: 'wasm', assetPath: '/modules/x/add.wasm' }],
+			},
+			new Map([['add.wasm', 'AAAA']]),
+		);
 
 		it('is dirty when there are no pristine tabs (no example selected)', () => {
 			expect(isTabSetDirty([], new Map([['script', 'anything']]))).toBe(true);
@@ -245,14 +265,17 @@ describe('render helpers', () => {
 		});
 
 		it('includes modules with whitespace stripped from base64 text', () => {
-			const tabs = exampleTabs({
-				id: '1',
-				title: 'x',
-				description: 'd',
-				suggestedUrls: [],
-				source: 'code',
-				modules: [{ name: 'add.wasm', kind: 'wasm', base64: 'AAAA' }],
-			});
+			const tabs = exampleTabs(
+				{
+					id: '1',
+					title: 'x',
+					description: 'd',
+					suggestedUrls: [],
+					source: 'code',
+					modules: [{ name: 'add.wasm', kind: 'wasm', assetPath: '/modules/x/add.wasm' }],
+				},
+				new Map([['add.wasm', 'AAAA']]),
+			);
 			const current = new Map([
 				['script', 'edited code'],
 				['add.wasm', 'AA AA\nBB\t'],
@@ -261,6 +284,27 @@ describe('render helpers', () => {
 				customCode: 'edited code',
 				modules: [{ name: 'add.wasm', kind: 'wasm', base64: 'AAAABB' }],
 			});
+		});
+	});
+
+	describe('bytesToBase64', () => {
+		it('matches btoa for a small buffer', () => {
+			const bytes = new TextEncoder().encode('hello world');
+			expect(bytesToBase64(bytes)).toBe(btoa('hello world'));
+		});
+
+		it('returns an empty string for an empty buffer', () => {
+			expect(bytesToBase64(new Uint8Array(0))).toBe('');
+		});
+
+		it('handles a buffer larger than the chunk size without dropping bytes', () => {
+			// Exercises the chunked String.fromCharCode loop (chunk size 0x8000):
+			// this buffer spans multiple chunks.
+			const bytes = new Uint8Array(0x8000 * 2 + 100);
+			for (let i = 0; i < bytes.length; i++) bytes[i] = i % 256;
+
+			const decoded = Uint8Array.from(atob(bytesToBase64(bytes)), (c) => c.charCodeAt(0));
+			expect(decoded).toEqual(bytes);
 		});
 	});
 
