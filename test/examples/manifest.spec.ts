@@ -3,8 +3,8 @@ import { EXAMPLES, listExamples, getExample } from '../../src/examples/manifest'
 
 describe('manifest', () => {
 	describe('EXAMPLES', () => {
-		it('contains all seven examples', () => {
-			expect(EXAMPLES).toHaveLength(7);
+		it('contains all eight examples', () => {
+			expect(EXAMPLES).toHaveLength(8);
 		});
 
 		it('has required ids', () => {
@@ -16,6 +16,7 @@ describe('manifest', () => {
 			expect(ids).toContain('blocked-fetch');
 			expect(ids).toContain('wasm-add');
 			expect(ids).toContain('image-hash');
+			expect(ids).toContain('github-repo');
 		});
 
 		it('each example has non-empty code string', () => {
@@ -37,7 +38,7 @@ describe('manifest', () => {
 	describe('listExamples()', () => {
 		it('returns all examples without code field', () => {
 			const examples = listExamples();
-			expect(examples).toHaveLength(7);
+			expect(examples).toHaveLength(8);
 
 			for (const example of examples) {
 				expect('code' in example).toBe(false);

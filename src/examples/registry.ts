@@ -94,4 +94,14 @@ export const EXAMPLE_REGISTRY: ReadonlyArray<ExampleMeta> = [
 		permissions: { fetch: 'page-links', cpuMs: 2000 },
 		modules: [{ name: 'photon.wasm', kind: 'wasm', file: 'node_modules/@cf-wasm/photon/dist/lib/photon_rs_bg.wasm' }],
 	},
+	{
+		id: 'github-repo',
+		title: 'GitHub Repo Stats (env.fetch)',
+		description:
+			'Parses a GitHub API repo response and follows the contributors_url and languages_url links embedded in the payload itself to build a stats summary.',
+		suggestedUrls: ['https://api.github.com/repos/cloudflare/workerd', 'https://api.github.com/repos/anthropics/claude-code'],
+		entry: 'src/examples/github-repo.ts',
+		compatDate: '2026-06-22',
+		permissions: { fetch: 'page-links' },
+	},
 ];

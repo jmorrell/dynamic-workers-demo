@@ -34,7 +34,7 @@ describe('GET /api/examples handler', () => {
 
 		const data = await response.json<Array<{ id: string; title: string; description: string }>>();
 		expect(Array.isArray(data)).toBe(true);
-		expect(data.length).toBe(7);
+		expect(data.length).toBe(8);
 
 		// Should not contain code field
 		for (const example of data) {
@@ -711,6 +711,158 @@ export default async (env, input) => {
 			expect(decoded?.width).toBe(1);
 			expect(decoded?.height).toBe(1);
 			expect(decoded?.dhash).toMatch(/^[0-9a-f]{16}$/);
+		});
+	});
+
+	describe('github-repo example (env.fetch capability, embedded-URL following)', () => {
+		const repoUrl = 'https://api.github.com/repos/cloudflare/workerd';
+		const contributorsUrl = 'https://api.github.com/repos/cloudflare/workerd/contributors';
+		const languagesUrl = 'https://api.github.com/repos/cloudflare/workerd/languages';
+
+		function repoPayload(): string {
+			return JSON.stringify({
+				full_name: 'cloudflare/workerd',
+				description: 'The JavaScript/Wasm runtime that powers Cloudflare Workers',
+				stargazers_count: 6000,
+				forks_count: 300,
+				open_issues_count: 42,
+				license: { spdx_id: 'Apache-2.0' },
+				topics: ['javascript', 'webassembly', 'workers'],
+				created_at: '2022-09-30T00:00:00Z',
+				pushed_at: '2026-07-01T00:00:00Z',
+				contributors_url: contributorsUrl,
+				languages_url: languagesUrl,
+				// URI template (RFC 6570); deliberately NOT fetchable — see github-repo.ts header comment.
+				releases_url: 'https://api.github.com/repos/cloudflare/workerd/releases{/id}',
+			});
+		}
+
+		function contributorsPayload(): string {
+			return JSON.stringify([
+				{ login: 'alice', contributions: 500 },
+				{ login: 'bob', contributions: 400 },
+				{ login: 'carol', contributions: 300 },
+				{ login: 'dave', contributions: 200 },
+				{ login: 'erin', contributions: 100 },
+				{ login: 'frank', contributions: 10 },
+			]);
+		}
+
+		function languagesPayload(): string {
+			return JSON.stringify({ 'C++': 750, TypeScript: 200, JavaScript: 50 });
+		}
+
+		afterEach(() => {
+			vi.unstubAllGlobals();
+		});
+
+		it('POST /api/run { type: "example", exampleId: "github-repo" } follows embedded contributors_url/languages_url', async () => {
+			vi.stubGlobal(
+				'fetch',
+				vi.fn((input: RequestInfo | URL) => {
+					const u = typeof input === 'string' ? input : input.toString();
+					if (u === contributorsUrl) {
+						return Promise.resolve(
+							new Response(contributorsPayload(), { status: 200, headers: { 'content-type': 'application/json; charset=utf-8' } }),
+						);
+					}
+					if (u === languagesUrl) {
+						return Promise.resolve(
+							new Response(languagesPayload(), { status: 200, headers: { 'content-type': 'application/json; charset=utf-8' } }),
+						);
+					}
+					return Promise.resolve(
+						new Response(repoPayload(), { status: 200, headers: { 'content-type': 'application/json; charset=utf-8' } }),
+					);
+				}),
+			);
+
+			const request = new IncomingRequest('http://example.com/api/run', {
+				method: 'POST',
+				headers: { 'CF-Connecting-IP': '203.0.113.242' },
+				body: JSON.stringify({
+					worker: { type: 'example', exampleId: 'github-repo' },
+					url: repoUrl,
+				}),
+			});
+			const ctx = createExecutionContext();
+			const response = await worker.fetch(request, env, ctx);
+			await waitOnExecutionContext(ctx);
+
+			expect(response.status).toBe(200);
+			const data = await response.json<{
+				ok: boolean;
+				result?: {
+					repo: { fullName: string; stars: number; license: string | null; topics: string[] };
+					topContributors: Array<{ login: string; contributions: number }>;
+					languages: Record<string, number>;
+				};
+				error?: { kind: string; message: string };
+			}>();
+
+			expect(data.ok).toBe(true);
+			expect(data.result?.repo.fullName).toBe('cloudflare/workerd');
+			expect(data.result?.repo.stars).toBe(6000);
+			expect(data.result?.repo.license).toBe('Apache-2.0');
+			expect(data.result?.repo.topics).toEqual(['javascript', 'webassembly', 'workers']);
+
+			expect(data.result?.topContributors).toHaveLength(5);
+			expect(data.result?.topContributors[0]).toEqual({ login: 'alice', contributions: 500 });
+			expect(data.result?.topContributors.map((c) => c.login)).not.toContain('frank');
+
+			expect(data.result?.languages).toEqual({ 'C++': 75, TypeScript: 20, JavaScript: 5 });
+		});
+
+		it('degrades gracefully when a follow-up fetch is rate-limited (403), keeping the rest of the result', async () => {
+			vi.stubGlobal(
+				'fetch',
+				vi.fn((input: RequestInfo | URL) => {
+					const u = typeof input === 'string' ? input : input.toString();
+					if (u === contributorsUrl) {
+						return Promise.resolve(
+							new Response(JSON.stringify({ message: 'API rate limit exceeded' }), {
+								status: 403,
+								headers: { 'content-type': 'application/json; charset=utf-8' },
+							}),
+						);
+					}
+					if (u === languagesUrl) {
+						return Promise.resolve(
+							new Response(languagesPayload(), { status: 200, headers: { 'content-type': 'application/json; charset=utf-8' } }),
+						);
+					}
+					return Promise.resolve(
+						new Response(repoPayload(), { status: 200, headers: { 'content-type': 'application/json; charset=utf-8' } }),
+					);
+				}),
+			);
+
+			const request = new IncomingRequest('http://example.com/api/run', {
+				method: 'POST',
+				headers: { 'CF-Connecting-IP': '203.0.113.243' },
+				body: JSON.stringify({
+					worker: { type: 'example', exampleId: 'github-repo' },
+					url: repoUrl,
+				}),
+			});
+			const ctx = createExecutionContext();
+			const response = await worker.fetch(request, env, ctx);
+			await waitOnExecutionContext(ctx);
+
+			expect(response.status).toBe(200);
+			const data = await response.json<{
+				ok: boolean;
+				result?: {
+					repo: { fullName: string };
+					topContributors: { error?: string };
+					languages: Record<string, number>;
+				};
+			}>();
+
+			expect(data.ok).toBe(true);
+			expect(data.result?.repo.fullName).toBe('cloudflare/workerd');
+			expect(data.result?.topContributors.error).toContain('rate limit exceeded');
+			expect(data.result?.languages).toEqual({ 'C++': 75, TypeScript: 20, JavaScript: 5 });
 		});
 	});
 
