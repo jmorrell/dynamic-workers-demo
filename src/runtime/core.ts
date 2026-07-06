@@ -1,4 +1,92 @@
-import type { RunErrorKind } from './types';
+import type { Permissions, RunErrorKind } from './types';
+
+/** Hard bounds for a permission's CPU budget, clamped server-side. */
+export const CPU_MS_MIN = 1;
+export const CPU_MS_MAX = 5000;
+
+/**
+ * Clamps a caller-supplied CPU budget into [CPU_MS_MIN, CPU_MS_MAX]. An absent
+ * or non-finite value falls back to `fallback` (the platform default).
+ */
+export function clampCpuMs(cpuMs: number | undefined, fallback: number): number {
+	if (typeof cpuMs !== 'number' || !Number.isFinite(cpuMs)) return fallback;
+	return Math.max(CPU_MS_MIN, Math.min(CPU_MS_MAX, Math.round(cpuMs)));
+}
+
+/** Narrowing validator for a caller-supplied Permissions object (custom runs). */
+export function isValidPermissions(value: unknown): value is Permissions {
+	if (typeof value !== 'object' || value === null) return false;
+	const fetch = (value as Record<string, unknown>).fetch;
+	if (fetch !== 'page-links' && fetch !== 'none') return false;
+	const cpuMs = (value as Record<string, unknown>).cpuMs;
+	if (cpuMs !== undefined && typeof cpuMs !== 'number') return false;
+	return true;
+}
+
+/**
+ * SSRF guard for outbound fetch targets (the target page fetch and every
+ * CapabilityGate fetch). Rejects non-http(s) schemes and hostnames that are
+ * loopback/private/link-local IP literals or obvious local names. This is a
+ * best-effort literal-host check — it does not resolve DNS (the runtime does
+ * that), but it blocks the direct-IP and localhost SSRF paths.
+ *
+ * Returns the normalized URL on success, or a human-readable reason on rejection.
+ */
+export function guardFetchUrl(rawUrl: string): { ok: true; url: URL } | { ok: false; reason: string } {
+	let url: URL;
+	try {
+		url = new URL(rawUrl);
+	} catch {
+		return { ok: false, reason: `invalid URL: ${rawUrl}` };
+	}
+
+	if (url.protocol !== 'http:' && url.protocol !== 'https:') {
+		return { ok: false, reason: `unsupported protocol: ${url.protocol}` };
+	}
+
+	if (isBlockedHost(url.hostname)) {
+		return { ok: false, reason: `blocked host (private/loopback/link-local): ${url.hostname}` };
+	}
+
+	return { ok: true, url };
+}
+
+/** True when a hostname is a loopback/private/link-local IP literal or local name. */
+function isBlockedHost(hostname: string): boolean {
+	const host = hostname.toLowerCase();
+
+	if (host === 'localhost' || host.endsWith('.localhost')) return true;
+
+	// IPv6 literal (URL hostname strips the surrounding brackets).
+	if (host.includes(':')) {
+		const h = host.replace(/^\[|\]$/g, '');
+		if (h === '::1' || h === '::') return true;
+		if (h.startsWith('fe8') || h.startsWith('fe9') || h.startsWith('fea') || h.startsWith('feb')) return true; // fe80::/10 link-local
+		if (h.startsWith('fc') || h.startsWith('fd')) return true; // fc00::/7 unique-local
+		// IPv4-mapped IPv6 (::ffff:a.b.c.d)
+		const mapped = h.match(/(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})$/);
+		if (mapped) return isBlockedIpv4(mapped[1]);
+		return false;
+	}
+
+	if (/^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}$/.test(host)) return isBlockedIpv4(host);
+
+	return false;
+}
+
+function isBlockedIpv4(ip: string): boolean {
+	const parts = ip.split('.').map((p) => Number(p));
+	if (parts.length !== 4 || parts.some((n) => !Number.isInteger(n) || n < 0 || n > 255)) return true;
+	const [a, b] = parts;
+	if (a === 0) return true; // 0.0.0.0/8
+	if (a === 10) return true; // 10.0.0.0/8 private
+	if (a === 127) return true; // 127.0.0.0/8 loopback
+	if (a === 169 && b === 254) return true; // 169.254.0.0/16 link-local
+	if (a === 172 && b >= 16 && b <= 31) return true; // 172.16.0.0/12 private
+	if (a === 192 && b === 168) return true; // 192.168.0.0/16 private
+	if (a === 100 && b >= 64 && b <= 127) return true; // 100.64.0.0/10 CGNAT
+	return false;
+}
 
 /**
  * Computes SHA-256 hash of code string for loader cache id.

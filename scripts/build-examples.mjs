@@ -185,6 +185,9 @@ async function buildManifest() {
 				source,
 				code,
 				compatDate: example.compatDate,
+				// Copied through so the manifest (and thus /api/examples) carries the
+				// example's capability grant. Omitted when the example declares none.
+				...(example.permissions ? { permissions: example.permissions } : {}),
 			});
 		} catch (error) {
 			console.error(`Failed to build example ${example.id}:`, error.message);

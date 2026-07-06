@@ -23,7 +23,7 @@ describe('runInLoader', () => {
 
 	describe('AC1.1 / AC1.3: Transform execution and roundtrip', () => {
 		it('executes sync transform and returns value', async () => {
-			const code = 'export default (input) => input.status';
+			const code = 'export default (env, input) => input.status';
 
 			const result = await runInLoader(env, testInput, code, crypto.randomUUID(), ctx);
 
@@ -34,7 +34,7 @@ describe('runInLoader', () => {
 		});
 
 		it('executes async transform and returns value', async () => {
-			const code = 'export default async (input) => { return Promise.resolve(input.status); }';
+			const code = 'export default async (env, input) => { return Promise.resolve(input.status); }';
 
 			const result = await runInLoader(env, testInput, code, crypto.randomUUID(), ctx);
 
@@ -45,7 +45,7 @@ describe('runInLoader', () => {
 		});
 
 		it('roundtrips object in result.value', async () => {
-			const code = `export default (input) => ({
+			const code = `export default (env, input) => ({
         url: input.url,
         status: input.status,
         contentType: input.contentType
@@ -64,7 +64,7 @@ describe('runInLoader', () => {
 		});
 
 		it('roundtrips array in result.value', async () => {
-			const code = `export default (input) => [
+			const code = `export default (env, input) => [
         input.status,
         input.contentType,
         input.truncated
@@ -79,7 +79,7 @@ describe('runInLoader', () => {
 		});
 
 		it('roundtrips string in result.value', async () => {
-			const code = 'export default (input) => "Hello: " + input.contentType';
+			const code = 'export default (env, input) => "Hello: " + input.contentType';
 
 			const result = await runInLoader(env, testInput, code, crypto.randomUUID(), ctx);
 
@@ -90,7 +90,7 @@ describe('runInLoader', () => {
 		});
 
 		it('roundtrips null value', async () => {
-			const code = 'export default (input) => null';
+			const code = 'export default (env, input) => null';
 
 			const result = await runInLoader(env, testInput, code, crypto.randomUUID(), ctx);
 
@@ -101,7 +101,7 @@ describe('runInLoader', () => {
 		});
 
 		it('roundtrips boolean value', async () => {
-			const code = 'export default (input) => input.truncated';
+			const code = 'export default (env, input) => input.truncated';
 
 			const result = await runInLoader(env, testInput, code, crypto.randomUUID(), ctx);
 
@@ -114,7 +114,7 @@ describe('runInLoader', () => {
 
 	describe('AC1.4: Transform error handling', () => {
 		it('returns transform_threw when sync transform throws', async () => {
-			const code = 'export default (input) => { throw new Error("Custom error"); }';
+			const code = 'export default (env, input) => { throw new Error("Custom error"); }';
 
 			const result = await runInLoader(env, testInput, code, crypto.randomUUID(), ctx);
 
@@ -126,7 +126,7 @@ describe('runInLoader', () => {
 		});
 
 		it('returns transform_threw when async transform throws', async () => {
-			const code = `export default async (input) => {
+			const code = `export default async (env, input) => {
         throw new Error("Async error");
       }`;
 
@@ -165,7 +165,7 @@ describe('runInLoader', () => {
 
 	describe('AC5.2: Network-blocked fetch', () => {
 		it('blocks fetch and returns network_blocked error', async () => {
-			const code = `export default async (input) => {
+			const code = `export default async (env, input) => {
         try {
           const response = await fetch("https://example.com");
           return response.status;
@@ -186,7 +186,7 @@ describe('runInLoader', () => {
 		});
 
 		it('network_blocked error classification matches classifyTransformError', async () => {
-			const code = `export default async (input) => {
+			const code = `export default async (env, input) => {
         try {
           await fetch("https://example.com");
         } catch (e) {
@@ -211,7 +211,7 @@ describe('runInLoader', () => {
 
 	describe('AC5.3: Isolation - no host secrets/bindings visible', () => {
 		it('cannot access globalThis host properties', async () => {
-			const code = `export default (input) => {
+			const code = `export default (env, input) => {
         return typeof globalThis.someHostValue;
       }`;
 
@@ -225,7 +225,7 @@ describe('runInLoader', () => {
 		});
 
 		it('transform receives only INPUT keys via its parameter — no host bindings leak in', async () => {
-			const code = `export default function(input) {
+			const code = `export default function(env, input) {
         // The transform's only data source is the input parameter (env is {} in
         // the loaded worker). Inspect its keys to confirm no host binding leaks.
         return Object.keys(input || {});
@@ -252,7 +252,7 @@ describe('runInLoader', () => {
 		});
 
 		it('only INPUT properties are accessible via input parameter', async () => {
-			const code = `export default function(input) {
+			const code = `export default function(env, input) {
         // Use input directly (not this.env) to verify isolation
         // input should be the RunInput, nothing else
         const keys = Object.keys(input || {});
@@ -329,7 +329,7 @@ describe('runInLoader', () => {
 
 	describe('Module resolution and harness wiring', () => {
 		it('finds and imports user module from ./user.js', async () => {
-			const code = 'export default (input) => "module loaded successfully"';
+			const code = 'export default (env, input) => "module loaded successfully"';
 
 			const result = await runInLoader(env, testInput, code, crypto.randomUUID(), ctx);
 
@@ -340,7 +340,7 @@ describe('runInLoader', () => {
 		});
 
 		it('passes INPUT to transform function', async () => {
-			const code = `export default (input) => {
+			const code = `export default (env, input) => {
         return {
           hasUrl: 'url' in input,
           hasFinalUrl: 'finalUrl' in input,
@@ -369,7 +369,7 @@ describe('runInLoader', () => {
 			// Regression: even though each run now gets its own loader id (code hash
 			// + runId), INPUT must still be delivered per invocation (not baked into
 			// the worker's env), since env is shared for the isolate's lifetime.
-			const code = 'export default (input) => input.url';
+			const code = 'export default (env, input) => input.url';
 			const first = await runInLoader(env, { ...testInput, url: 'https://first.example' }, code, crypto.randomUUID(), ctx);
 			const second = await runInLoader(env, { ...testInput, url: 'https://second.example' }, code, crypto.randomUUID(), ctx);
 
@@ -405,7 +405,7 @@ describe('runInLoader', () => {
 		});
 
 		it('handles transform that returns undefined', async () => {
-			const code = 'export default (input) => undefined';
+			const code = 'export default (env, input) => undefined';
 
 			const result = await runInLoader(env, testInput, code, crypto.randomUUID(), ctx);
 
@@ -416,7 +416,7 @@ describe('runInLoader', () => {
 		});
 
 		it('handles transform that returns 0', async () => {
-			const code = 'export default (input) => 0';
+			const code = 'export default (env, input) => 0';
 
 			const result = await runInLoader(env, testInput, code, crypto.randomUUID(), ctx);
 
@@ -427,7 +427,7 @@ describe('runInLoader', () => {
 		});
 
 		it('handles transform that returns empty string', async () => {
-			const code = 'export default (input) => ""';
+			const code = 'export default (env, input) => ""';
 
 			const result = await runInLoader(env, testInput, code, crypto.randomUUID(), ctx);
 
@@ -438,7 +438,7 @@ describe('runInLoader', () => {
 		});
 
 		it('handles transform that returns empty array', async () => {
-			const code = 'export default (input) => []';
+			const code = 'export default (env, input) => []';
 
 			const result = await runInLoader(env, testInput, code, crypto.randomUUID(), ctx);
 
@@ -450,7 +450,7 @@ describe('runInLoader', () => {
 		});
 
 		it('handles transform that returns empty object', async () => {
-			const code = 'export default (input) => ({})';
+			const code = 'export default (env, input) => ({})';
 
 			const result = await runInLoader(env, testInput, code, crypto.randomUUID(), ctx);
 
@@ -469,7 +469,7 @@ describe('runInLoader', () => {
 			// so its tail binding attributes logs to the right runId. Verifies the
 			// two independent isolates still produce consistent results for the
 			// same code, not that they share one.
-			const code = 'export default (input) => input.status';
+			const code = 'export default (env, input) => input.status';
 
 			const result1 = await runInLoader(env, testInput, code, crypto.randomUUID(), ctx);
 			const result2 = await runInLoader(env, testInput, code, crypto.randomUUID(), ctx);
@@ -483,8 +483,8 @@ describe('runInLoader', () => {
 		});
 
 		it('different code gets different cache id', async () => {
-			const code1 = 'export default (input) => 1';
-			const code2 = 'export default (input) => 2';
+			const code1 = 'export default (env, input) => 1';
+			const code2 = 'export default (env, input) => 2';
 
 			const result1 = await runInLoader(env, testInput, code1, crypto.randomUUID(), ctx);
 			const result2 = await runInLoader(env, testInput, code2, crypto.randomUUID(), ctx);
@@ -507,7 +507,7 @@ describe('runInLoader', () => {
 			const code = "import { greeting } from 'linkedom';\nexport default () => greeting;";
 			const extraModules = { linkedom: 'export const greeting = "hello from stub linkedom";' };
 
-			const result = await runInLoader(env, testInput, code, crypto.randomUUID(), ctx, undefined, extraModules);
+			const result = await runInLoader(env, testInput, code, crypto.randomUUID(), ctx, { extraModules });
 
 			expect(result.type).toBe('success');
 			if (result.type === 'success') {
@@ -519,7 +519,7 @@ describe('runInLoader', () => {
 			const code = "import { greeting } from 'defuddle/node';\nexport default () => greeting;";
 			const extraModules = { 'defuddle/node': 'export const greeting = "hello from stub defuddle/node";' };
 
-			const result = await runInLoader(env, testInput, code, crypto.randomUUID(), ctx, undefined, extraModules);
+			const result = await runInLoader(env, testInput, code, crypto.randomUUID(), ctx, { extraModules });
 
 			expect(result.type).toBe('success');
 			if (result.type === 'success') {
@@ -531,7 +531,7 @@ describe('runInLoader', () => {
 			const code = "import { greeting } from './markdown-dom-polyfill';\nexport default () => greeting;";
 			const extraModules = { 'markdown-dom-polyfill': 'export const greeting = "hello from stub polyfill";' };
 
-			const result = await runInLoader(env, testInput, code, crypto.randomUUID(), ctx, undefined, extraModules);
+			const result = await runInLoader(env, testInput, code, crypto.randomUUID(), ctx, { extraModules });
 
 			expect(result.type).toBe('success');
 			if (result.type === 'success') {
@@ -543,12 +543,71 @@ describe('runInLoader', () => {
 			const code = 'export default () => "real user code";';
 			const extraModules = { 'user.js': 'export default () => "hijacked";' };
 
-			const result = await runInLoader(env, testInput, code, crypto.randomUUID(), ctx, undefined, extraModules);
+			const result = await runInLoader(env, testInput, code, crypto.randomUUID(), ctx, { extraModules });
 
 			expect(result.type).toBe('success');
 			if (result.type === 'success') {
 				expect(result.value).toBe('real user code');
 			}
+		});
+	});
+
+	describe('permissions → WorkerCode limits.cpuMs (structural; enforcement is deploy-only)', () => {
+		// Capture the WorkerCode the loader hands to LOADER.get by wrapping env with a
+		// mock LOADER whose get() invokes the code callback (so ctx.exports wiring and
+		// hashing still run) and returns a trivial entrypoint. cpuMs enforcement itself
+		// is deploy-only per AGENTS.md, so we assert the value structurally here.
+		async function captureWorkerCode(
+			permissions: import('../../src/runtime/types').Permissions | undefined,
+		): Promise<WorkerLoaderWorkerCode> {
+			let captured: WorkerLoaderWorkerCode | undefined;
+			const fakeEnv = {
+				...env,
+				LOADER: {
+					get(_id: string, getCode: () => Promise<WorkerLoaderWorkerCode>) {
+						const codePromise = Promise.resolve(getCode());
+						return {
+							getEntrypoint: () => ({
+								run: async () => {
+									captured = await codePromise;
+									return { type: 'success', value: null };
+								},
+							}),
+						};
+					},
+				},
+			} as unknown as Env;
+
+			await runInLoader(fakeEnv, testInput, 'export default () => null', crypto.randomUUID(), ctx, { permissions });
+			if (!captured) throw new Error('WorkerCode was not captured');
+			return captured;
+		}
+
+		it('defaults cpuMs to CPU_LIMIT_MS (50) when no permissions given', async () => {
+			const wc = await captureWorkerCode(undefined);
+			expect(wc.limits?.cpuMs).toBe(50);
+		});
+
+		it('passes a valid cpuMs through unchanged', async () => {
+			const wc = await captureWorkerCode({ fetch: 'none', cpuMs: 500 });
+			expect(wc.limits?.cpuMs).toBe(500);
+		});
+
+		it('clamps an over-budget cpuMs to 5000', async () => {
+			const wc = await captureWorkerCode({ fetch: 'none', cpuMs: 999999 });
+			expect(wc.limits?.cpuMs).toBe(5000);
+		});
+
+		it('clamps a below-minimum cpuMs to 1', async () => {
+			const wc = await captureWorkerCode({ fetch: 'none', cpuMs: 0 });
+			expect(wc.limits?.cpuMs).toBe(1);
+		});
+
+		it('attaches the CapabilityGate to env only for a page-links grant', async () => {
+			const withFetch = await captureWorkerCode({ fetch: 'page-links' });
+			const withoutFetch = await captureWorkerCode({ fetch: 'none' });
+			expect('GATE' in (withFetch.env as Record<string, unknown>)).toBe(true);
+			expect(Object.keys(withoutFetch.env as Record<string, unknown>)).toEqual([]);
 		});
 	});
 });

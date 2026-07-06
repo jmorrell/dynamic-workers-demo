@@ -1,4 +1,5 @@
 import { GENERATED_MANIFEST } from './manifest.generated';
+import type { Permissions } from '../runtime/types';
 
 export type Example = {
 	readonly id: string;
@@ -8,6 +9,9 @@ export type Example = {
 	readonly source: string;
 	readonly code: string;
 	readonly compatDate: string;
+	// Optional capability grant (see registry.ts). Exposed to the frontend via
+	// listExamples so a dirty (custom) run can inherit the example's permissions.
+	readonly permissions?: Permissions;
 };
 
 export const EXAMPLES: ReadonlyArray<Example> = GENERATED_MANIFEST as unknown as ReadonlyArray<Example>;

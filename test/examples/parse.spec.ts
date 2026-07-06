@@ -6,16 +6,19 @@ import hackernews from '../../src/examples/hackernews';
 
 // The parsing logic lives inline inside each example's transform(). These tests
 // drive the examples through their default export, feeding `body` via RunInput.
-function runInput(body: string): RunInput {
+function runInput(body: string, url = 'https://example.com'): RunInput {
 	return {
-		url: 'https://example.com',
-		finalUrl: 'https://example.com',
+		url,
+		finalUrl: url,
 		status: 200,
 		contentType: 'text/html',
 		body,
 		truncated: false,
 	};
 }
+
+const REDDIT_URL = 'https://www.reddit.com/r/webdev/comments/abc123/some_thread/.json';
+const HN_URL = 'https://hn.algolia.com/api/v1/items/39284928';
 
 describe('opengraph example', () => {
 	it('extracts og: properties from HTML', () => {
@@ -28,7 +31,7 @@ describe('opengraph example', () => {
 			</head>
 			</html>
 		`;
-		const result = opengraph(runInput(html)) as Record<string, string>;
+		const result = opengraph({}, runInput(html)) as Record<string, string>;
 		expect(result['og:title']).toBe('My Article');
 		expect(result['og:description']).toBe('A great article');
 		expect(result['og:image']).toBe('https://example.com/image.jpg');
@@ -36,11 +39,11 @@ describe('opengraph example', () => {
 
 	it('returns empty object when no og tags found', () => {
 		const html = '<html><head><title>No OG tags</title></head></html>';
-		expect(opengraph(runInput(html))).toEqual({});
+		expect(opengraph({}, runInput(html))).toEqual({});
 	});
 
 	it('handles malformed HTML gracefully', () => {
-		expect(opengraph(runInput('not valid html at all'))).toEqual({});
+		expect(opengraph({}, runInput('not valid html at all'))).toEqual({});
 	});
 
 	it('extracts twitter: tags', () => {
@@ -52,7 +55,7 @@ describe('opengraph example', () => {
 			</head>
 			</html>
 		`;
-		const result = opengraph(runInput(html)) as Record<string, string>;
+		const result = opengraph({}, runInput(html)) as Record<string, string>;
 		expect(result['twitter:card']).toBe('summary');
 		expect(result['twitter:title']).toBe('Tweet Title');
 	});
@@ -75,7 +78,7 @@ describe('reddit example', () => {
 			},
 		]);
 
-		const result = reddit(runInput(json)) as RedditComment[];
+		const result = reddit({}, runInput(json, REDDIT_URL)) as RedditComment[];
 		expect(result).toHaveLength(3);
 		expect(result[0].author).toBe('user2');
 		expect(result[0].score).toBe(25);
@@ -92,21 +95,27 @@ describe('reddit example', () => {
 		}));
 		const json = JSON.stringify([{ data: { children: [] } }, { data: { children } }]);
 
-		const result = reddit(runInput(json)) as RedditComment[];
+		const result = reddit({}, runInput(json, REDDIT_URL)) as RedditComment[];
 		expect(result).toHaveLength(10);
 		expect(result[0].author).toBe('user0'); // highest score
 	});
 
-	it('returns empty array on invalid JSON', () => {
-		expect(reddit(runInput('not json'))).toEqual([]);
+	it('throws when the URL is not a Reddit host', () => {
+		expect(() => reddit({}, runInput('not json', 'https://example.com/foo'))).toThrow(/only works with Reddit URLs/);
 	});
 
-	it('returns empty array when body is missing', () => {
-		const json = JSON.stringify([
-			{ data: { children: [] } },
-			{ data: { children: [{ data: { author: 'user1', score: 10 } }] } },
-		]);
-		expect(reddit(runInput(json))).toEqual([]);
+	it('throws with a corrected .json URL when the body is HTML, not JSON', () => {
+		const url = 'https://www.reddit.com/r/steammachine/comments/1ump4mz/steam_machine_gamecube_size_comparison/';
+		expect(() => reddit({}, runInput('<!doctype html><html></html>', url))).toThrow(
+			'https://www.reddit.com/r/steammachine/comments/1ump4mz/steam_machine_gamecube_size_comparison.json',
+		);
+	});
+
+	it('throws on a Reddit JSON response with the wrong shape (e.g. a listing)', () => {
+		const listingJson = JSON.stringify({ kind: 'Listing', data: { children: [] } });
+		expect(() => reddit({}, runInput(listingJson, 'https://www.reddit.com/r/javascript/hot/.json'))).toThrow(
+			/Expected a Reddit thread \.json URL/,
+		);
 	});
 
 	it('skips entries without required fields', () => {
@@ -123,7 +132,7 @@ describe('reddit example', () => {
 			},
 		]);
 
-		const result = reddit(runInput(json)) as RedditComment[];
+		const result = reddit({}, runInput(json, REDDIT_URL)) as RedditComment[];
 		expect(result).toHaveLength(2);
 		expect(result[0].author).toBe('user1');
 		expect(result[1].author).toBe('user3');
@@ -149,7 +158,7 @@ describe('hackernews example', () => {
 			],
 		});
 
-		const result = hackernews(runInput(json)) as HnComment[];
+		const result = hackernews({}, runInput(json, HN_URL)) as HnComment[];
 		expect(result).toHaveLength(4);
 		expect(result[0].author).toBe('alice');
 		expect(result[0].points).toBe(42);
@@ -165,12 +174,26 @@ describe('hackernews example', () => {
 		}));
 		const json = JSON.stringify({ children });
 
-		const result = hackernews(runInput(json)) as HnComment[];
+		const result = hackernews({}, runInput(json, HN_URL)) as HnComment[];
 		expect(result).toHaveLength(10);
 	});
 
-	it('returns empty array on invalid JSON', () => {
-		expect(hackernews(runInput('invalid json'))).toEqual([]);
+	it('throws when the URL is not the HN Algolia API', () => {
+		expect(() => hackernews({}, runInput('invalid json', 'https://example.com/foo'))).toThrow(
+			/only works with the HN Algolia API/,
+		);
+	});
+
+	it('throws with a corrected hn.algolia.com URL for a news.ycombinator.com item link', () => {
+		expect(() =>
+			hackernews({}, runInput('<!doctype html><html></html>', 'https://news.ycombinator.com/item?id=39284928')),
+		).toThrow('https://hn.algolia.com/api/v1/items/39284928');
+	});
+
+	it('throws on JSON without the expected item/children shape', () => {
+		expect(() => hackernews({}, runInput(JSON.stringify({ hits: [] }), HN_URL))).toThrow(
+			/Expected an HN Algolia item URL/,
+		);
 	});
 
 	it('handles null points gracefully', () => {
@@ -182,7 +205,7 @@ describe('hackernews example', () => {
 			],
 		});
 
-		const result = hackernews(runInput(json)) as HnComment[];
+		const result = hackernews({}, runInput(json, HN_URL)) as HnComment[];
 		expect(result).toHaveLength(3);
 		expect(result[0].points).toBe(100);
 		expect(result[1].points).toBe(50);
@@ -198,7 +221,7 @@ describe('hackernews example', () => {
 			],
 		});
 
-		const result = hackernews(runInput(json)) as HnComment[];
+		const result = hackernews({}, runInput(json, HN_URL)) as HnComment[];
 		expect(result).toHaveLength(2);
 		expect(result[0].author).toBe('user1');
 		expect(result[1].author).toBe('user3');

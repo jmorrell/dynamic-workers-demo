@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { escapeHtml, formatResultValue, formatRunResponse, exampleOptions } from '../../frontend/lib/render';
+import { escapeHtml, formatResultValue, formatRunResponse, exampleOptions, formatPermissions } from '../../frontend/lib/render';
 
 describe('render helpers', () => {
 	describe('escapeHtml', () => {
@@ -156,6 +156,24 @@ describe('render helpers', () => {
 		it('returns empty array for empty examples', () => {
 			const options = exampleOptions([]);
 			expect(options).toEqual([]);
+		});
+	});
+
+	describe('formatPermissions', () => {
+		it('returns null for undefined permissions', () => {
+			expect(formatPermissions(undefined)).toBeNull();
+		});
+
+		it('returns null for a no-network grant', () => {
+			expect(formatPermissions({ fetch: 'none' })).toBeNull();
+		});
+
+		it('formats a page-links grant', () => {
+			expect(formatPermissions({ fetch: 'page-links' })).toBe('permissions: fetch page-links');
+		});
+
+		it('includes a cpu budget when present', () => {
+			expect(formatPermissions({ fetch: 'page-links', cpuMs: 500 })).toBe('permissions: fetch page-links · cpu 500ms');
 		});
 	});
 });

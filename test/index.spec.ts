@@ -238,7 +238,7 @@ describe('POST /api/run handler', () => {
 
 	describe('happy path - successful transform', () => {
 		it('POST /api/run with customCode returns 200 and result structure', async () => {
-			const transformCode = 'export default (input) => input.status';
+			const transformCode = 'export default (env, input) => input.status';
 			const request = new IncomingRequest('http://example.com/api/run', {
 				method: 'POST',
 				body: JSON.stringify({
@@ -308,7 +308,7 @@ describe('POST /api/run handler', () => {
 			const tsCode = `
 				type Input = { status: number };
 				interface Result { doubled: number }
-				export default (input: Input): Result => ({ doubled: input.status * 2 });
+				export default (env: unknown, input: Input): Result => ({ doubled: input.status * 2 });
 			`;
 			const request = new IncomingRequest('http://example.com/api/run', {
 				method: 'POST',
@@ -333,7 +333,7 @@ describe('POST /api/run handler', () => {
 		it('returns ok:false with compile_failed for custom code with a TS syntax error', async () => {
 			stubTargetFetch('<html>hi</html>');
 
-			const brokenCode = 'export default (input) => { const x = ; }';
+			const brokenCode = 'export default (env, input) => { const x = ; }';
 			const request = new IncomingRequest('http://example.com/api/run', {
 				method: 'POST',
 				headers: { 'CF-Connecting-IP': '203.0.113.211' },
@@ -384,9 +384,112 @@ describe('POST /api/run handler', () => {
 		});
 	});
 
+	describe('capabilities: page-links fetch permission (end-to-end)', () => {
+		afterEach(() => {
+			vi.unstubAllGlobals();
+		});
+
+		it('custom run with fetch:page-links can fetch a URL linked from the fetched page and return its content', async () => {
+			const linked = 'https://example.com/linked-doc';
+			// One stub serves both the target page fetch (fetchTarget) and the gate's
+			// fetch, keyed by URL: the page links to `linked`, the gate then fetches it.
+			vi.stubGlobal(
+				'fetch',
+				vi.fn((input: RequestInfo | URL) => {
+					const u = typeof input === 'string' ? input : input.toString();
+					if (u === linked) {
+						return Promise.resolve(new Response('LINKED PAGE CONTENT', { status: 200, headers: { 'content-type': 'text/plain' } }));
+					}
+					return Promise.resolve(
+						new Response(`<html><body><a href="${linked}">doc</a></body></html>`, {
+							status: 200,
+							headers: { 'content-type': 'text/html' },
+						}),
+					);
+				}),
+			);
+
+			const customCode = `export default async (env, input) => {
+				const res = await env.fetch('${linked}');
+				return { fetchedStatus: res.status, fetchedBody: res.body };
+			}`;
+
+			const request = new IncomingRequest('http://example.com/api/run', {
+				method: 'POST',
+				headers: { 'CF-Connecting-IP': '203.0.113.220' },
+				body: JSON.stringify({
+					worker: { type: 'custom', customCode },
+					url: 'http://example.com/page',
+					permissions: { fetch: 'page-links' },
+				}),
+			});
+			const ctx = createExecutionContext();
+			const response = await worker.fetch(request, env, ctx);
+			await waitOnExecutionContext(ctx);
+
+			expect(response.status).toBe(200);
+			const data = await response.json<{ ok: boolean; result?: { fetchedStatus: number; fetchedBody: string } }>();
+			expect(data.ok).toBe(true);
+			expect(data.result?.fetchedStatus).toBe(200);
+			expect(data.result?.fetchedBody).toBe('LINKED PAGE CONTENT');
+		});
+
+		it('a fetch to a URL NOT linked from the page is denied (transform_threw, not referenced)', async () => {
+			vi.stubGlobal(
+				'fetch',
+				vi.fn(() =>
+					Promise.resolve(
+						new Response('<html><body><a href="https://example.com/linked">ok</a></body></html>', {
+							status: 200,
+							headers: { 'content-type': 'text/html' },
+						}),
+					),
+				),
+			);
+
+			const customCode = `export default async (env, input) => {
+				return await env.fetch('https://example.com/not-linked');
+			}`;
+
+			const request = new IncomingRequest('http://example.com/api/run', {
+				method: 'POST',
+				headers: { 'CF-Connecting-IP': '203.0.113.221' },
+				body: JSON.stringify({
+					worker: { type: 'custom', customCode },
+					url: 'http://example.com/page',
+					permissions: { fetch: 'page-links' },
+				}),
+			});
+			const ctx = createExecutionContext();
+			const response = await worker.fetch(request, env, ctx);
+			await waitOnExecutionContext(ctx);
+
+			const data = await response.json<{ ok: boolean; error?: { kind: string; message: string } }>();
+			expect(data.ok).toBe(false);
+			expect(data.error?.kind).toBe('transform_threw');
+			expect(data.error?.message).toContain('not referenced by the fetched page');
+		});
+
+		it('rejects a custom run with a malformed permissions shape (400 bad_request)', async () => {
+			const request = new IncomingRequest('http://example.com/api/run', {
+				method: 'POST',
+				headers: { 'CF-Connecting-IP': '203.0.113.222' },
+				body: JSON.stringify({
+					worker: { type: 'custom', customCode: 'export default (env, input) => 1' },
+					url: 'http://example.com/page',
+					permissions: { fetch: 'everything' },
+				}),
+			});
+			const ctx = createExecutionContext();
+			const response = await worker.fetch(request, env, ctx);
+			await waitOnExecutionContext(ctx);
+			expect(response.status).toBe(400);
+		});
+	});
+
 	describe('fetch failure scenarios', () => {
 		it('returns fetch error when target URL fails', async () => {
-			const transformCode = 'export default (input) => input.status';
+			const transformCode = 'export default (env, input) => input.status';
 			const request = new IncomingRequest('http://example.com/api/run', {
 				method: 'POST',
 				body: JSON.stringify({
@@ -446,7 +549,7 @@ describe('POST /api/run handler', () => {
 		});
 
 		it('returns raw <script> tag as unmodified string in JSON (trust boundary)', async () => {
-			const transformCode = 'export default (input) => ({ script: "<script>alert(1)</script>" })';
+			const transformCode = 'export default (env, input) => ({ script: "<script>alert(1)</script>" })';
 			const request = new IncomingRequest('http://example.com/api/run', {
 				method: 'POST',
 				body: JSON.stringify({

@@ -121,7 +121,7 @@ describe('Abuse controls on /api/run', () => {
 				const request = new IncomingRequest('http://example.com/api/run', {
 					method: 'POST',
 					body: JSON.stringify({
-						worker: { type: 'custom', customCode: 'export default (input) => input.status' },
+						worker: { type: 'custom', customCode: 'export default (env, input) => input.status' },
 						url: 'https://example.com/test',
 						turnstileToken: '1x00000000000000000000AA',
 					}),

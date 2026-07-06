@@ -1,3 +1,5 @@
+import type { Permissions } from '../runtime/types';
+
 export type ExampleMeta = {
 	readonly id: string;
 	readonly title: string;
@@ -8,6 +10,9 @@ export type ExampleMeta = {
 	// (rather than following the loader's global default) so bumping the default
 	// doesn't silently change an already-verified example's runtime behavior.
 	readonly compatDate: string;
+	// Capability grant this example runs with. Absent → the default no-network
+	// grant. A page-links grant unlocks env.fetch against the fetched page's links.
+	readonly permissions?: Permissions;
 };
 
 // Modules injected into the loader for edited (custom) example code, since
@@ -42,7 +47,7 @@ export const EXAMPLE_REGISTRY: ReadonlyArray<ExampleMeta> = [
 		id: 'reddit',
 		title: 'Reddit Top Comments',
 		description: 'Extracts the top-scoring comments from a Reddit thread.',
-		suggestedUrls: ['https://www.reddit.com/r/programming/comments/1a1b2c/example.json', 'https://www.reddit.com/r/javascript/hot/.json'],
+		suggestedUrls: ['https://www.reddit.com/r/steammachine/comments/1ump4mz/steam_machine_gamecube_size_comparison/.json'],
 		entry: 'src/examples/reddit.ts',
 		compatDate: '2026-06-22',
 	},

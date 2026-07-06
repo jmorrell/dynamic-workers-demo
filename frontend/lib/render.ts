@@ -1,12 +1,27 @@
 // pattern: Functional Core
 
+export type Permissions = {
+	readonly fetch: 'page-links' | 'none';
+	readonly cpuMs?: number;
+};
+
 export type Example = {
 	readonly id: string;
 	readonly title: string;
 	readonly description: string;
 	readonly suggestedUrls: ReadonlyArray<string>;
 	readonly source: string;
+	readonly permissions?: Permissions;
 };
+
+// Human-readable one-liner for the static permissions hint under the Code label.
+// Returns null when there's nothing noteworthy to surface (default no-network grant).
+export function formatPermissions(permissions: Permissions | undefined): string | null {
+	if (!permissions || permissions.fetch === 'none') return null;
+	const parts = [`fetch ${permissions.fetch}`];
+	if (typeof permissions.cpuMs === 'number') parts.push(`cpu ${permissions.cpuMs}ms`);
+	return `permissions: ${parts.join(' · ')}`;
+}
 
 type RunResponseOk = {
 	readonly ok: true;

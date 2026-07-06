@@ -6,7 +6,7 @@ import type { RunInput } from '../../src/runtime/types';
 
 describe('transpileUserCode', () => {
 	it('strips type annotations from function parameters and return types', () => {
-		const source = 'export default (input: { url: string }): string => input.url;';
+		const source = 'export default (env: unknown, input: { url: string }): string => input.url;';
 
 		const result = transpileUserCode(source);
 
@@ -18,7 +18,7 @@ describe('transpileUserCode', () => {
 	});
 
 	it('strips type-only imports', () => {
-		const source = "import type { RunInput } from '../runtime/types';\nexport default (input: RunInput) => input.url;";
+		const source = "import type { RunInput } from '../runtime/types';\nexport default (env: unknown, input: RunInput) => input.url;";
 
 		const result = transpileUserCode(source);
 
@@ -31,7 +31,7 @@ describe('transpileUserCode', () => {
 	});
 
 	it('passes plain JavaScript through unchanged in behavior', () => {
-		const source = 'export default (input) => input.status;';
+		const source = 'export default (env, input) => input.status;';
 
 		const result = transpileUserCode(source);
 
@@ -42,7 +42,7 @@ describe('transpileUserCode', () => {
 	});
 
 	it('returns compile_failed on invalid syntax', () => {
-		const source = 'export default (input) => { const x = ; }';
+		const source = 'export default (env, input) => { const x = ; }';
 
 		const result = transpileUserCode(source);
 
@@ -74,7 +74,7 @@ describe('transpileUserCode', () => {
 			const source = `
 				type Input = { status: number };
 				interface Result { doubled: number }
-				export default (input: Input): Result => ({ doubled: input.status * 2 });
+				export default (env: unknown, input: Input): Result => ({ doubled: input.status * 2 });
 			`;
 
 			const transpiled = transpileUserCode(source);
@@ -99,7 +99,7 @@ describe('selectReferencedDeps', () => {
 	];
 
 	it('picks only deps referenced by the code', () => {
-		const code = "import { parseHTML } from 'linkedom';\nexport default (input) => input.status;";
+		const code = "import { parseHTML } from 'linkedom';\nexport default (env, input) => input.status;";
 
 		const selected = selectReferencedDeps(code, deps);
 
@@ -115,7 +115,7 @@ describe('selectReferencedDeps', () => {
 	});
 
 	it('returns an empty array when no deps are referenced', () => {
-		const code = 'export default (input) => input.status;';
+		const code = 'export default (env, input) => input.status;';
 
 		const selected = selectReferencedDeps(code, deps);
 

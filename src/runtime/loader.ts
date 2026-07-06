@@ -1,9 +1,25 @@
-import { classifyLoaderError, hashCode } from './core';
-import type { RunInput, RunResult } from './types';
+import { classifyLoaderError, clampCpuMs, hashCode } from './core';
+import type { Permissions, RunInput, RunResult } from './types';
 import { HARNESS_SOURCE } from './harness-source';
 
 /** CPU limit for sandboxed worker code execution (in milliseconds) */
 export const CPU_LIMIT_MS = 50;
+
+/**
+ * Optional loader inputs. Consolidated into one object because several are
+ * independently optional (compat date, injected deps, capability grant).
+ * - `compatDate` — override the Dynamic Worker compat date (examples pin theirs).
+ * - `extraModules` — shared dep modules injected for edited/custom code.
+ * - `permissions` — capability grant; drives `limits.cpuMs` and gate attachment.
+ * - `allowedUrls` — URLs referenced by the fetched page; required when
+ *   `permissions.fetch === 'page-links'`, passed to the gate as props.
+ */
+export type RunOptions = {
+	readonly compatDate?: string;
+	readonly extraModules?: Readonly<Record<string, string>>;
+	readonly permissions?: Permissions;
+	readonly allowedUrls?: ReadonlyArray<string>;
+};
 
 // Default compatibility date for Dynamic Workers running arbitrary (non-example)
 // code. Mirrors wrangler.jsonc's compatibility_date. Saved examples pin their own
@@ -28,9 +44,9 @@ export async function runInLoader(
 	code: string,
 	runId: string,
 	ctx: ExecutionContext,
-	compatDate: string = DEFAULT_COMPAT_DATE,
-	extraModules?: Readonly<Record<string, string>>,
+	opts: RunOptions = {},
 ): Promise<RunResult> {
+	const { compatDate = DEFAULT_COMPAT_DATE, extraModules, permissions, allowedUrls } = opts;
 	try {
 		// 1. Scope the loader id to this run, not just the code. The tail worker
 		// binding (below) is attached at isolate creation time, so an id shared
@@ -64,24 +80,35 @@ export async function runInLoader(
 				}
 			}
 
+			// ctx.exports is typed {} until GlobalProps is generated; narrow the loopback bindings.
+			const exports = ctx.exports as {
+				LogTailer: (o: { props: { runId: string } }) => Fetcher;
+				CapabilityGate: (o: { props: { runId: string; allowedUrls: ReadonlyArray<string> } }) => Fetcher;
+			};
+
+			// The loaded worker's env carries at most the CapabilityGate loopback —
+			// never host bindings/secrets. It appears only when fetch is permitted;
+			// otherwise env stays {} and the sandbox is fully network-blocked.
+			// globalOutbound stays null regardless (the gate is a service binding,
+			// unaffected by globalOutbound); INPUT is passed to run() per invocation.
+			const workerEnv: Record<string, unknown> =
+				permissions?.fetch === 'page-links'
+					? { GATE: exports.CapabilityGate({ props: { runId, allowedUrls: allowedUrls ?? [] } }) }
+					: {};
+
 			const workerCode: WorkerLoaderWorkerCode = {
 				compatibilityDate,
 				compatibilityFlags: ['nodejs_compat'],
 				mainModule: 'harness.js',
 				modules,
-				// No per-request data here: INPUT is passed to run() per invocation
-				// (see step 3). Keeping env empty also guarantees no host
-				// bindings/secrets leak into the sandboxed isolate.
-				env: {},
-				globalOutbound: null, // Block all outbound fetch
+				env: workerEnv,
+				globalOutbound: null, // Block all ambient outbound fetch; permitted fetch goes through GATE
 				limits: {
-					cpuMs: CPU_LIMIT_MS,
+					cpuMs: clampCpuMs(permissions?.cpuMs, CPU_LIMIT_MS),
 					subRequests: 5,
 				},
 			};
 
-			// ctx.exports is typed {} until GlobalProps is generated; narrow the loopback binding.
-			const exports = ctx.exports as { LogTailer: (o: { props: { runId: string } }) => Fetcher };
 			workerCode.tails = [exports.LogTailer({ props: { runId } })];
 
 			return workerCode;

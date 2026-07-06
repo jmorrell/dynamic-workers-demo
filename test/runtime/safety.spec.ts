@@ -25,7 +25,7 @@ describe('Safety demos: hostile code containment', () => {
 		it('blocked-fetch module attempts network call and gets blocked', async () => {
 			// Inline the blocked-fetch example module as JavaScript (transpiled from TS)
 			const blockedFetchCode = `
-export default async function transform(input) {
+export default async function transform(env, input) {
 	const res = await fetch('https://example.com/should-be-blocked');
 	return { status: res.status, from: input.url };
 }
@@ -75,7 +75,7 @@ export default async function transform(input) {
 				// The actual cpu-spin containment and responsiveness under concurrent spin
 				// is verified on deploy (see deployment notes below).
 
-				const trivialCode = 'export default (input) => ({ received: true, url: input.url })';
+				const trivialCode = 'export default (env, input) => ({ received: true, url: input.url })';
 
 				// Run multiple trivial requests concurrently to verify host responsiveness
 				const results = await Promise.all([
@@ -97,7 +97,7 @@ export default async function transform(input) {
 				// Second responsiveness check: sequential requests should complete normally.
 				// This establishes a baseline for host performance.
 
-				const trivialCode = 'export default (input) => input.status';
+				const trivialCode = 'export default (env, input) => input.status';
 
 				// Issue three sequential requests
 				const result1 = await runInLoader(env, testInput, trivialCode, crypto.randomUUID(), ctx);

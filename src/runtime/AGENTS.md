@@ -9,16 +9,43 @@ subrequests) and structured results that never throw at the host. Also fetches
 the target URL, captures the sandbox's logs, and enforces abuse gates.
 
 ## Contracts
-- **Exposes**: `runInLoader(env, input, code, runId, ctx, compatDate?, extraModules?) →
-  RunResult`; `fetchTarget(url, opts?) → FetchOutcome`; `verifyTurnstile(...)`;
-  `transpileUserCode(source) → TranspileResult`; DO `LogSession`; tail worker
-  `LogTailer`; types in `types.ts` / `log-types.ts`.
-- **run() contract**: the harness exposes `run(input: RunInput): Promise<RunResult>`.
-  INPUT is passed PER INVOCATION as the RPC argument — NOT via `env`. The loaded
-  worker's `env` is intentionally `{}` (no host bindings/secrets leak in).
-- **Guarantees**: `RunResult` is always structured (`{type:'success',value}` or
-  `{type:'failure',error:{kind,message}}`); host never sees a thrown transform
-  error. Outbound `fetch` from sandbox is blocked (`globalOutbound: null`).
+- **Exposes**: `runInLoader(env, input, code, runId, ctx, opts?) → RunResult`
+  (trailing optionals consolidated into one `RunOptions` object:
+  `{ compatDate?, extraModules?, permissions?, allowedUrls? }`); `fetchTarget(url,
+  opts?) → FetchOutcome`; `verifyTurnstile(...)`; `transpileUserCode(source) →
+  TranspileResult`; `extractLinkedUrls(body, contentType, baseUrl) → string[]`;
+  DO `LogSession`; tail worker `LogTailer`; loopback gate `CapabilityGate`; types
+  in `types.ts` / `log-types.ts`.
+- **Transform signature**: the default export is `(env, input) => …`. `env` is a
+  capability object (its FIRST argument, mirroring how Workers hand bindings to
+  code), `input` is the page snapshot. INPUT is passed PER INVOCATION as the RPC
+  argument — NOT via the loaded worker's `env`.
+- **run() contract**: the harness exposes `run(input: RunInput): Promise<RunResult>`
+  and internally calls `transform(userEnv, input)`. `userEnv` is `{}` under the
+  default no-network grant; with fetch permission it is
+  `{ fetch(url), fetchFile(url) }`, both proxying to the host `CapabilityGate`.
+- **Permissions**: `type Permissions = { fetch: 'page-links' | 'none'; cpuMs? }`.
+  Default `{ fetch: 'none' }`; `cpuMs` defaults to `CPU_LIMIT_MS` (50) and is
+  clamped to `[1, 5000]` (`clampCpuMs` in core). Example runs use the example's
+  registered permissions (request-supplied ignored); custom runs use the
+  request's, validated/clamped (bad shape → 400).
+- **Gate contract**: `CapabilityGate` (WorkerEntrypoint, reached via
+  `ctx.exports.CapabilityGate({ props: { runId, allowedUrls } })`, attached as the
+  loaded worker's `env.GATE`). `fetchText(url) → { status, contentType, body,
+  truncated }` (2 MiB, UTF-8-boundary truncation); `fetchFile(url) → { status,
+  contentType, bytes, truncated }` (20 MiB, byte truncation). Both require the
+  normalized URL to be an EXACT member of `props.allowedUrls` (URLs referenced by
+  the fetched page — no arbitrary spidering), pass the SSRF host guard
+  (`guardFetchUrl`), obey an 8s timeout, and share a per-run 5-fetch cap.
+- **URL extraction**: `extractLinkedUrls` (pure, `extract-urls.ts`) parses HTML
+  (linkedom, host-side) URL-bearing attributes (incl. `srcset` candidates and
+  absolute-URL `meta[content]`) or, for JSON/text, regex-matches absolute http(s)
+  URLs including JSON-escaped `https:\/\/` forms; resolves against the base,
+  http/https only, dedupes, caps at 2000, returns normalized `URL.toString()`.
+- **Guarantees**: `RunResult` is always structured; host never sees a thrown
+  transform error. A gate rejection surfaces as a normal `transform_threw` unless
+  the transform catches it. Ambient outbound `fetch` from the sandbox is blocked
+  (`globalOutbound: null` ALWAYS); permitted fetch only flows through the gate.
 - **Expects**: `code` is a self-contained ESM string with a default-export
   transform function. `RunInput` is a plain snapshot (url/finalUrl/status/
   contentType/responseHeaders/body/truncated).
@@ -69,19 +96,45 @@ the target URL, captures the sandbox's logs, and enforces abuse gates.
   loaded worker's `tails`) forwards trace logs to `LogSession` DO, keyed by
   `runId`; the host polls `getLogs(timeoutMs)`. `LogSession` state is in-memory
   only (no `ctx.storage`) — a deliberate trade for the short single-request rendezvous.
+- **Capability gate via env-loopback**: a `ctx.exports.CapabilityGate({ props })`
+  loopback attached in the LOADED worker's `env` (not just as a `tails` binding)
+  is callable via RPC from inside the Dynamic Worker — verified empirically in the
+  local workerd pool (`test/runtime/capability-gate.spec.ts`). The gate is a
+  service binding, so `globalOutbound: null` stays in force alongside it. All
+  policy (allowlist, SSRF guard, size/timeout/count caps) lives host-side; the
+  sandbox only ever receives plain return data.
+- **Gate fetch counter is module-scoped, not instance state**: workerd
+  instantiates a fresh `WorkerEntrypoint` per RPC call, so a per-instance counter
+  would reset each `env.fetch`. The gate keeps a module-level `Map<runId, count>`
+  (same in-memory trade as `LogSession`). The sandbox's `limits.subRequests: 5`
+  caps this from the other side in production; the host tally is the locally
+  testable half.
 - **SYNC PARTNER**: `harness-source.ts` inlines `classifyTransformError` as a
   string; `core.ts` is canonical. Change both together.
 
 ## Invariants
-- Loaded worker `env` stays `{}`; never pass host bindings/secrets in.
-- Containment limits: `CPU_LIMIT_MS = 50`, `subRequests: 5`, `globalOutbound: null`.
+- Loaded worker `env` carries at most the `CapabilityGate` loopback (`{ GATE }`,
+  only under a page-links grant); otherwise it stays `{}`. Never pass host
+  bindings/secrets in. The gate returns only plain data — no bindings reach the
+  sandbox through it.
+- Containment limits: `CPU_LIMIT_MS = 50` (overridable per-run via clamped
+  `permissions.cpuMs`), `subRequests: 5`, `globalOutbound: null` (always).
+- Gate fetch caps: `fetchText` 2 MiB (UTF-8-boundary), `fetchFile` 20 MiB (byte),
+  8s timeout, 5 gate fetches per run (host-side tally keyed by runId — workerd
+  instantiates a fresh entrypoint per RPC, so this cannot be instance state).
+- `guardFetchUrl` (core, pure) blocks non-http(s) and private/loopback/link-local
+  IP literals + localhost; used by the gate (and available to the target fetch).
 - `fetchTarget` caps body (default 2 MiB) and timeout (default 8s), truncating
   at a UTF-8 boundary; sets `truncated`.
 
 ## Key Files
 - `loader.ts` - load/cache/invoke the Dynamic Worker (shell)
 - `harness-source.ts` - in-sandbox entrypoint as a module string (the `HARNESS_SOURCE` actually loaded into the Dynamic Worker)
-- `core.ts` - pure helpers: `hashCode`, `truncateBody`, error classifiers
+- `core.ts` - pure helpers: `hashCode`, `truncateBody`, `guardFetchUrl`,
+  `clampCpuMs`, `isValidPermissions`, error classifiers
+- `capability-gate.ts` - `CapabilityGate` loopback entrypoint (host-side fetch
+  policy for the sandbox); exported from `src/index.ts` for `ctx.exports`
+- `extract-urls.ts` - pure `extractLinkedUrls` (allowlist derivation from a page)
 - `transpile.ts` - pure: `transpileUserCode` (sucrase TS→JS), `selectReferencedDeps`
 - `fetch-target.ts` - target fetch + RunInput snapshot
 - `log-session.ts` / `log-tailer.ts` / `log-cap.ts` / `log-types.ts` - log capture

@@ -42,7 +42,7 @@ describe('Log capture and forwarding (AC3)', () => {
 		it('silent transform returns empty logs, not an error', async () => {
 			const runId = `test-silent-${Date.now()}-${Math.random()}`;
 			const code = `
-        export default (input) => {
+        export default (env, input) => {
           // No console.log, no exceptions
           return 'result';
         }
@@ -66,7 +66,7 @@ describe('Log capture and forwarding (AC3)', () => {
 		it('transform with no logging returns empty log array', async () => {
 			const runId = `test-no-logs-${Date.now()}-${Math.random()}`;
 			const code = `
-        export default (input) => {
+        export default (env, input) => {
           const x = input.status;
           const y = input.contentType;
           return { status: x, type: y };
@@ -137,7 +137,7 @@ describe('Log capture and forwarding (AC3)', () => {
 			// available in local vitest (see note above).
 			const runId = `test-integration-${Date.now()}-${Math.random()}`;
 			const code = `
-        export default (input) => {
+        export default (env, input) => {
           console.log('test message');
           return 'success';
         }

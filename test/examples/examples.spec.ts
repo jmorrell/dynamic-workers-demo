@@ -458,33 +458,60 @@ describe('Example transforms through loader (AC2.1–AC2.5)', () => {
 			}
 		});
 
-		it('reddit returns empty array for invalid JSON', async () => {
+		it('reddit throws (transform_threw) for a non-Reddit URL', async () => {
 			const example = getExample('reddit');
 			expect(example).toBeDefined();
 			if (!example) return;
 
 			const input: RunInput = {
-				url: 'https://www.reddit.com/r/test/comments/invalid.json',
-				finalUrl: 'https://www.reddit.com/r/test/comments/invalid.json',
+				url: 'https://example.com/not-reddit',
+				finalUrl: 'https://example.com/not-reddit',
 				status: 200,
-				contentType: 'application/json',
+				contentType: 'text/html',
 				responseHeaders: new Map(),
-				body: 'not valid json',
+				body: '<html></html>',
 				truncated: false,
 			};
 
 			const ctx = createExecutionContext();
 			const result = await runInLoader(env, input, example.code, crypto.randomUUID(), ctx);
 
-			expect(result.type).toBe('success');
-			if (result.type === 'success') {
-				const output = result.value as unknown;
-				expect(Array.isArray(output)).toBe(true);
-				expect((output as Array<unknown>).length).toBe(0);
+			expect(result.type).toBe('failure');
+			if (result.type === 'failure') {
+				expect(result.error.kind).toBe('transform_threw');
+				expect(result.error.message).toContain('only works with Reddit URLs');
 			}
 		});
 
-		it('hackernews returns empty array for invalid JSON', async () => {
+		it('reddit throws with a corrected .json URL when given a Reddit HTML thread page', async () => {
+			const example = getExample('reddit');
+			expect(example).toBeDefined();
+			if (!example) return;
+
+			const url = 'https://www.reddit.com/r/steammachine/comments/1ump4mz/steam_machine_gamecube_size_comparison/';
+			const input: RunInput = {
+				url,
+				finalUrl: url,
+				status: 200,
+				contentType: 'text/html',
+				responseHeaders: new Map(),
+				body: '<!doctype html><html><body>Reddit thread page</body></html>',
+				truncated: false,
+			};
+
+			const ctx = createExecutionContext();
+			const result = await runInLoader(env, input, example.code, crypto.randomUUID(), ctx);
+
+			expect(result.type).toBe('failure');
+			if (result.type === 'failure') {
+				expect(result.error.kind).toBe('transform_threw');
+				expect(result.error.message).toContain(
+					'https://www.reddit.com/r/steammachine/comments/1ump4mz/steam_machine_gamecube_size_comparison.json',
+				);
+			}
+		});
+
+		it('hackernews throws (transform_threw) for a non-Algolia URL', async () => {
 			const example = getExample('hackernews');
 			expect(example).toBeDefined();
 			if (!example) return;
@@ -502,11 +529,36 @@ describe('Example transforms through loader (AC2.1–AC2.5)', () => {
 			const ctx = createExecutionContext();
 			const result = await runInLoader(env, input, example.code, crypto.randomUUID(), ctx);
 
-			expect(result.type).toBe('success');
-			if (result.type === 'success') {
-				const output = result.value as unknown;
-				expect(Array.isArray(output)).toBe(true);
-				expect((output as Array<unknown>).length).toBe(0);
+			expect(result.type).toBe('failure');
+			if (result.type === 'failure') {
+				expect(result.error.kind).toBe('transform_threw');
+				expect(result.error.message).toContain('valid JSON');
+			}
+		});
+
+		it('hackernews throws with a corrected hn.algolia.com URL for a news.ycombinator.com item link', async () => {
+			const example = getExample('hackernews');
+			expect(example).toBeDefined();
+			if (!example) return;
+
+			const url = 'https://news.ycombinator.com/item?id=39284928';
+			const input: RunInput = {
+				url,
+				finalUrl: url,
+				status: 200,
+				contentType: 'text/html',
+				responseHeaders: new Map(),
+				body: '<!doctype html><html><body>HN item page</body></html>',
+				truncated: false,
+			};
+
+			const ctx = createExecutionContext();
+			const result = await runInLoader(env, input, example.code, crypto.randomUUID(), ctx);
+
+			expect(result.type).toBe('failure');
+			if (result.type === 'failure') {
+				expect(result.error.kind).toBe('transform_threw');
+				expect(result.error.message).toContain('https://hn.algolia.com/api/v1/items/39284928');
 			}
 		});
 

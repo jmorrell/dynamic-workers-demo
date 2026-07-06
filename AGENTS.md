@@ -7,6 +7,20 @@ fetched URL inside a sandboxed Dynamic Worker (the `LOADER` `worker_loaders`
 binding), with CPU/network containment, captured logs, a curated example
 library, and an embeddable widget.
 
+## Capabilities model
+Transforms are `(env, input) => …`: `env` is an explicit capability object (its
+FIRST argument, mirroring how Workers hand bindings to code), `input` is the page
+snapshot. By default `env` is `{}` and the sandbox is fully network-blocked. A
+permission grant (`{ fetch: 'page-links' | 'none'; cpuMs? }`) can unlock
+`env.fetch(url)` / `env.fetchFile(url)`, but they may ONLY reach URLs that the
+originally fetched page references (parsed from the payload — no arbitrary
+spidering). All policy (allowlist, SSRF/IP guards, size/timeout/count caps) lives
+host-side in the `CapabilityGate`, which the sandbox reaches through a
+`ctx.exports` loopback attached as the loaded worker's `env.GATE`. Examples run
+with their registered `permissions`; custom runs supply their own (validated,
+`cpuMs` clamped to `[1,5000]`). See `src/runtime/AGENTS.md` for the gate/extraction
+contracts.
+
 ## Tech Stack
 - TypeScript on Cloudflare Workers (`nodejs_compat`)
 - Dynamic Workers via `LOADER` (worker_loaders binding)
@@ -22,8 +36,8 @@ library, and an embeddable widget.
 - `npm run cf-typegen` - regenerate `worker-configuration.d.ts` after binding changes
 
 ## Project Structure
-- `src/index.ts` - HTTP entrypoint; routes `/api/examples`, `/api/config`, `/api/run`; abuse gates
-- `src/runtime/` - sandbox harness, loader, fetch, log capture, turnstile (see runtime AGENTS.md)
+- `src/index.ts` - HTTP entrypoint; routes `/api/examples`, `/api/config`, `/api/run`; abuse gates; exports `LogSession`/`LogTailer`/`CapabilityGate`
+- `src/runtime/` - sandbox harness, loader, fetch, log capture, turnstile, capability gate + URL extraction (see runtime AGENTS.md)
 - `src/examples/` - example transforms + registry; manifest generated at build time
 - `frontend/` - embeddable widget source, bundled to `public/app.js`
 - `public/` - static assets served by `ASSETS`; `app.js` is generated-but-committed

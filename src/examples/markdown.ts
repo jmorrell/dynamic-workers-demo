@@ -7,9 +7,9 @@
 import './markdown-dom-polyfill';
 import { parseHTML } from 'linkedom';
 import { Defuddle } from 'defuddle/node';
-import type { RunInput } from '../runtime/types';
+import type { RunInput, TransformEnv } from '../runtime/types';
 
-export default async function transform(input: RunInput): Promise<unknown> {
+export default async function transform(env: TransformEnv, input: RunInput): Promise<unknown> {
 	try {
 		const { document } = parseHTML(input.body);
 		const result = await Defuddle(document, input.finalUrl, { markdown: true });

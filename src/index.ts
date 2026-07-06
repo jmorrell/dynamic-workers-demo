@@ -1,7 +1,9 @@
 import { fetchTarget } from './runtime/fetch-target';
 import { runInLoader } from './runtime/loader';
 import { transpileUserCode, selectReferencedDeps } from './runtime/transpile';
-import type { RunErrorKind, RunRequestBody, UserWorker } from './runtime/types';
+import { extractLinkedUrls } from './runtime/extract-urls';
+import { isValidPermissions } from './runtime/core';
+import type { Permissions, RunErrorKind, RunRequestBody, UserWorker } from './runtime/types';
 import { listExamples, getExample } from './examples/manifest';
 import { SHARED_DEP_SPECIFIERS } from './examples/registry';
 import { GENERATED_DEP_MODULES } from './examples/deps.generated';
@@ -74,7 +76,7 @@ async function handleRun(request: Request, env: Env, ctx: ExecutionContext): Pro
 		return jsonError(400, 'bad_request', 'Missing required field: url');
 	}
 
-	const { url, worker, turnstileToken } = body as Partial<Record<keyof RunRequestBody, unknown>>;
+	const { url, worker, turnstileToken, permissions: requestPermissions } = body as Partial<Record<keyof RunRequestBody, unknown>>;
 
 	// GATE 1: Rate limit by client IP
 	const clientIp = request.headers.get('CF-Connecting-IP') ?? 'anonymous';
@@ -134,6 +136,10 @@ async function handleRun(request: Request, env: Env, ctx: ExecutionContext): Pro
 	// imports need, since a pristine example's deps are already baked into
 	// example.code by the build (scripts/build-examples.mjs).
 	let extraModules: Record<string, string> | undefined;
+	// Effective capability grant. For examples, the registered permissions win
+	// (request-supplied ones are ignored). For custom runs, the request supplies
+	// them (validated below). Absent → default no-network grant in the loader.
+	let permissions: Permissions | undefined;
 
 	if (userWorker.type === 'example') {
 		const example = getExample(userWorker.exampleId);
@@ -143,7 +149,17 @@ async function handleRun(request: Request, env: Env, ctx: ExecutionContext): Pro
 
 		code = example.code;
 		compatDate = example.compatDate;
+		// The example's registered permissions win; request-supplied ones are ignored.
+		permissions = example.permissions;
 	} else {
+		// Custom runs may declare their own permissions; reject a malformed shape.
+		if (requestPermissions !== undefined) {
+			if (!isValidPermissions(requestPermissions)) {
+				return jsonError(400, 'bad_request', 'Invalid permissions shape');
+			}
+			permissions = requestPermissions;
+		}
+
 		// Custom/edited code arrives as TypeScript (the editor never distinguishes
 		// TS from JS); transpile before handing it to the loader.
 		const transpiled = transpileUserCode(userWorker.customCode);
@@ -193,9 +209,20 @@ async function handleRun(request: Request, env: Env, ctx: ExecutionContext): Pro
 	// Generate unique run ID for this execution
 	const runId = crypto.randomUUID();
 
+	// With fetch permission, the allowlist is exactly the URLs referenced by the
+	// fetched page — the gate rejects anything else (no arbitrary spidering).
+	const allowedUrls =
+		permissions?.fetch === 'page-links'
+			? extractLinkedUrls(
+					fetchOutcome.input.body,
+					fetchOutcome.input.contentType,
+					fetchOutcome.input.finalUrl || fetchOutcome.input.url,
+				)
+			: undefined;
+
 	// Run code in loader
 	const startTime = performance.now();
-	const result = await runInLoader(env, fetchOutcome.input, code, runId, ctx, compatDate, extraModules);
+	const result = await runInLoader(env, fetchOutcome.input, code, runId, ctx, { compatDate, extraModules, permissions, allowedUrls });
 	const timingMs = Math.round(performance.now() - startTime);
 
 	// Read logs from LogSession
@@ -217,6 +244,7 @@ async function handleRun(request: Request, env: Env, ctx: ExecutionContext): Pro
 
 export { LogSession } from './runtime/log-session';
 export { LogTailer } from './runtime/log-tailer';
+export { CapabilityGate } from './runtime/capability-gate';
 
 /**
  * Override the Turnstile verifier for testing.

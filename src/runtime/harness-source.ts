@@ -42,8 +42,21 @@ export default class Harness extends WorkerEntrypoint {
       };
     }
 
+    // Build the capability object handed to the transform as its FIRST argument.
+    // Empty by default (no network). When the loader attached the CapabilityGate
+    // loopback (fetch permission), expose fetch/fetchFile that proxy to the host
+    // gate, which enforces the allowlist and safety rails. A gate rejection throws
+    // and surfaces as a normal transform error unless the transform catches it.
+    const gate = this.env && this.env.GATE;
+    const userEnv = gate
+      ? {
+          fetch: (url) => gate.fetchText(url),
+          fetchFile: (url) => gate.fetchFile(url),
+        }
+      : {};
+
     try {
-      const value = await transform(input);
+      const value = await transform(userEnv, input);
       return { type: 'success', value };
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);

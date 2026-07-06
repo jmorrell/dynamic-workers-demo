@@ -1,8 +1,8 @@
 // NOTE: Example payload (untrusted code). Not application code — executed via the loader.
 
-import type { RunInput } from '../runtime/types';
+import type { RunInput, TransformEnv } from '../runtime/types';
 
-export default function transform(input: RunInput): unknown {
+export default function transform(env: TransformEnv, input: RunInput): unknown {
 	const result: Record<string, string> = {};
 
 	try {

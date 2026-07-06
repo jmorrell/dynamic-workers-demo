@@ -1,6 +1,6 @@
 // pattern: Imperative Shell
 
-import { formatRunResponse, exampleOptions, type RunResponse, type Example } from './lib/render';
+import { formatRunResponse, exampleOptions, formatPermissions, type RunResponse, type Example } from './lib/render';
 import { EditorView, basicSetup } from 'codemirror';
 import { keymap } from '@codemirror/view';
 import { indentWithTab } from '@codemirror/commands';
@@ -32,6 +32,7 @@ const exampleSelect = document.getElementById('example') as HTMLSelectElement;
 const urlInput = document.getElementById('url') as HTMLInputElement;
 const editorContainer = document.getElementById('editor') as HTMLDivElement;
 const editorStatusEl = document.getElementById('editor-status') as HTMLSpanElement;
+const editorPermsEl = document.getElementById('editor-perms') as HTMLDivElement;
 const editorResetButton = document.getElementById('editor-reset') as HTMLButtonElement;
 const runButton = document.getElementById('run-button') as HTMLButtonElement;
 const resultsSection = document.getElementById('results') as HTMLDivElement;
@@ -94,6 +95,14 @@ function updateEditorStatus(): void {
 	const dirty = isDirty();
 	editorStatusEl.style.display = dirty && state.selectedExampleId ? 'inline' : 'none';
 	editorResetButton.style.display = dirty && state.selectedExampleId ? 'inline-block' : 'none';
+}
+
+// Static hint reflecting the selected example's capability grant. A dirty custom
+// run inherits these permissions (see onRunClick), so the line stays accurate.
+function updatePermissionsHint(): void {
+	const line = formatPermissions(selectedExample()?.permissions);
+	editorPermsEl.textContent = line ?? '';
+	editorPermsEl.style.display = line ? 'block' : 'none';
 }
 
 // Initialize on page load
@@ -199,8 +208,18 @@ function selectExample(selectedId: string | null): void {
 		suggestedUrlsSection.style.display = 'none';
 	}
 
+	clearResults();
 	updateEditorStatus();
+	updatePermissionsHint();
 	updateRunButton();
+}
+
+function clearResults(): void {
+	resultsSection.className = 'empty';
+	resultsTitleEl.textContent = '';
+	resultsBodyEl.innerHTML = '';
+	logsContainerEl.innerHTML = '';
+	timingInfoEl.innerHTML = '';
 }
 
 function onResetClick(): void {
@@ -253,6 +272,11 @@ async function onRunClick(): Promise<void> {
 		payload.worker = { type: 'example', exampleId: state.selectedExampleId };
 	} else {
 		payload.worker = { type: 'custom', customCode: editorText() };
+		// A dirty run drops out of the example path, so the server no longer sees
+		// the example's registered permissions — send them explicitly so an edited
+		// example keeps the same capability grant it had when pristine.
+		const inherited = selectedExample()?.permissions;
+		if (inherited) payload.permissions = inherited;
 	}
 
 	// Get the Turnstile token if the widget is ready
