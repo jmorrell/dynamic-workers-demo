@@ -14,6 +14,7 @@ type RunResponseOk = {
 	readonly logs: ReadonlyArray<{ readonly level: string; readonly message: string }>;
 	readonly logsTruncated: boolean;
 	readonly timingMs: number;
+	readonly inputTruncated: boolean;
 };
 
 type RunResponseError = {
@@ -22,6 +23,7 @@ type RunResponseError = {
 	readonly logs: ReadonlyArray<{ readonly level: string; readonly message: string }>;
 	readonly logsTruncated: boolean;
 	readonly timingMs: number;
+	readonly inputTruncated: boolean;
 };
 
 export type RunResponse = RunResponseOk | RunResponseError;

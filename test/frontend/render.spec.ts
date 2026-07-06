@@ -89,6 +89,7 @@ describe('render helpers', () => {
 				logs: [],
 				logsTruncated: false,
 				timingMs: 100,
+				inputTruncated: false,
 			};
 			const formatted = formatRunResponse(response);
 			expect(formatted.tone).toBe('ok');
@@ -103,6 +104,7 @@ describe('render helpers', () => {
 				logs: [],
 				logsTruncated: false,
 				timingMs: 100,
+				inputTruncated: false,
 			};
 			const formatted = formatRunResponse(response);
 			expect(formatted.tone).toBe('error');
@@ -117,6 +119,7 @@ describe('render helpers', () => {
 				logs: [],
 				logsTruncated: false,
 				timingMs: 100,
+				inputTruncated: false,
 			};
 			const formatted = formatRunResponse(response);
 			// formatRunResponse must NOT pre-escape — main.ts renders via textContent,
@@ -131,6 +134,7 @@ describe('render helpers', () => {
 				logs: [],
 				logsTruncated: false,
 				timingMs: 100,
+				inputTruncated: false,
 			};
 			const formatted = formatRunResponse(response);
 			expect(formatted.body).toContain('<img src=x onerror=alert(1)>');

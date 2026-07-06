@@ -15,7 +15,7 @@ export const DEFAULT_COMPAT_DATE = '2026-06-22';
  * Runs untrusted code against a URL in a sandboxed dynamic worker.
  *
  * Steps:
- * 1. Hash the code for loader cache id (identical code reuses warm isolate)
+ * 1. Derive a per-run loader id from the code hash + runId
  * 2. Get/create worker via env.LOADER with WorkerCode containing harness + user code
  * 3. Invoke worker.getEntrypoint().run() with RPC call
  * 4. Handle loader-level failures (RPC errors, etc.)
@@ -29,10 +29,16 @@ export async function runInLoader(
 	runId: string,
 	ctx: ExecutionContext,
 	compatDate: string = DEFAULT_COMPAT_DATE,
+	extraModules?: Readonly<Record<string, string>>,
 ): Promise<RunResult> {
 	try {
-		// 1. Hash the code for cache key (identical code → same isolate)
-		const id = await hashCode(code);
+		// 1. Scope the loader id to this run, not just the code. The tail worker
+		// binding (below) is attached at isolate creation time, so an id shared
+		// across runs of identical code would keep serving the FIRST run's tail
+		// binding — its logs would forward to a runId no host is polling anymore.
+		// Including runId forces a fresh isolate per run; input is still passed
+		// per-call (see below) since that's orthogonal, independently-good hygiene.
+		const id = `${await hashCode(code)}:${runId}`;
 
 		// 2. Get or create the worker via the loader
 		const worker = env.LOADER.get(id, async () => {
@@ -42,17 +48,30 @@ export async function runInLoader(
 			// regardless of what compatDate the caller resolved for production.
 			const compatibilityDate = env.ENVIRONMENT === 'test' && env.LOADER_COMPAT_DATE ? env.LOADER_COMPAT_DATE : compatDate;
 
+			const modules: Record<string, string | { js: string }> = {
+				'harness.js': HARNESS_SOURCE,
+				'user.js': code,
+			};
+
+			// Extra modules (e.g. shared deps for edited example code — see
+			// src/index.ts) are injected as the typed `{ js }` form, keyed by
+			// exact import specifier (no automatic '.js' suffix resolution).
+			// Never let a caller-supplied key shadow the harness or user module.
+			if (extraModules) {
+				for (const [specifier, source] of Object.entries(extraModules)) {
+					if (specifier === 'harness.js' || specifier === 'user.js') continue;
+					modules[specifier] = { js: source };
+				}
+			}
+
 			const workerCode: WorkerLoaderWorkerCode = {
 				compatibilityDate,
 				compatibilityFlags: ['nodejs_compat'],
 				mainModule: 'harness.js',
-				modules: {
-					'harness.js': HARNESS_SOURCE,
-					'user.js': code,
-				},
-				// No per-request data here: the worker is cached by code hash and
-				// reused across inputs, so INPUT is passed to run() per invocation.
-				// Keeping env empty also guarantees no host bindings/secrets leak in.
+				modules,
+				// No per-request data here: INPUT is passed to run() per invocation
+				// (see step 3). Keeping env empty also guarantees no host
+				// bindings/secrets leak into the sandboxed isolate.
 				env: {},
 				globalOutbound: null, // Block all outbound fetch
 				limits: {
@@ -68,7 +87,7 @@ export async function runInLoader(
 			return workerCode;
 		});
 
-		// 3. Invoke the harness via RPC, passing INPUT per call (see note above).
+		// 3. Invoke the harness via RPC, passing INPUT per call (see step 1 note).
 		// getEntrypoint() is opaquely typed; the loaded mainModule (HARNESS_SOURCE)
 		// exposes run(input). Narrow via unknown since the types don't overlap.
 		const entrypoint = worker.getEntrypoint() as unknown as { run(input: RunInput): Promise<RunResult> };

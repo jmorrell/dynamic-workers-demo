@@ -13,7 +13,7 @@ export async function fetchTarget(
 	},
 ): Promise<FetchOutcome> {
 	const timeoutMs = options?.timeoutMs ?? 8000;
-	const maxBytes = options?.maxBytes ?? 256 * 1024;
+	const maxBytes = options?.maxBytes ?? 2 * 1024 * 1024;
 
 	// Validate URL
 	try {

@@ -14,16 +14,20 @@
   "devDependencies": {
     "@cloudflare/vitest-pool-workers": "^0.12.4",
     "@types/node": "^26.0.0",
-    "@types/prismjs": "^1.26.6",
     "esbuild": "^0.28.1",
     "typescript": "^5.5.2",
     "vitest": "~3.2.0",
     "wrangler": "^4.103.0"
   },
   "dependencies": {
-    "codejar": "^4.3.0",
+    "@codemirror/commands": "^6.10.4",
+    "@codemirror/lang-javascript": "^6.2.5",
+    "@codemirror/language": "^6.12.4",
+    "@codemirror/state": "^6.7.1",
+    "@codemirror/view": "^6.43.5",
+    "codemirror": "^6.0.2",
     "defuddle": "^0.19.0",
     "linkedom": "^0.18.12",
-    "prismjs": "^1.30.0"
+    "sucrase": "^3.35.1"
   }
 }

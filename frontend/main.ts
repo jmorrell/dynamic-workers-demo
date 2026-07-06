@@ -1,16 +1,19 @@
 // pattern: Imperative Shell
 
 import { formatRunResponse, exampleOptions, type RunResponse, type Example } from './lib/render';
-import { CodeJar } from 'codejar';
-import Prism from 'prismjs';
-import 'prismjs/components/prism-javascript';
+import { EditorView, basicSetup } from 'codemirror';
+import { keymap } from '@codemirror/view';
+import { indentWithTab } from '@codemirror/commands';
+import { javascript } from '@codemirror/lang-javascript';
+import { indentUnit } from '@codemirror/language';
+
+const PLACEHOLDER_CODE = '// Select an example to start (or edit it — edits run as custom code)';
 
 // Module-singleton UI state; fields are mutated in place by the event handlers
 // below (intentional for this thin imperative shell).
 type State = {
 	examples: Array<Example>;
 	selectedExampleId: string | null;
-	isCustomCode: boolean;
 	isRunning: boolean;
 	turnstileWidgetId: string | null;
 	turnstileReady: boolean;
@@ -19,7 +22,6 @@ type State = {
 const state: State = {
 	examples: [],
 	selectedExampleId: null,
-	isCustomCode: false,
 	isRunning: false,
 	turnstileWidgetId: null,
 	turnstileReady: false,
@@ -28,8 +30,9 @@ const state: State = {
 // DOM element references
 const exampleSelect = document.getElementById('example') as HTMLSelectElement;
 const urlInput = document.getElementById('url') as HTMLInputElement;
-const customCodeToggle = document.getElementById('custom-code-toggle') as HTMLInputElement;
-const editorDiv = document.getElementById('editor') as HTMLDivElement;
+const editorContainer = document.getElementById('editor') as HTMLDivElement;
+const editorStatusEl = document.getElementById('editor-status') as HTMLSpanElement;
+const editorResetButton = document.getElementById('editor-reset') as HTMLButtonElement;
 const runButton = document.getElementById('run-button') as HTMLButtonElement;
 const resultsSection = document.getElementById('results') as HTMLDivElement;
 const resultsTitleEl = document.getElementById('results-title') as HTMLDivElement;
@@ -40,18 +43,57 @@ const suggestedUrlsSection = document.getElementById('suggested-urls-section') a
 const suggestedUrlsEl = document.getElementById('suggested-urls') as HTMLDivElement;
 const turnstileDiv = document.getElementById('turnstile') as HTMLDivElement;
 
-// CodeJar turns the editor div into an editable, syntax-highlighted code field
-// with cursor preservation across re-highlights. setEditorCode() toggles between
-// read-only (example source display) and editable (custom code).
-const jar = CodeJar(editorDiv, (el) => {
-	const code = el.textContent ?? '';
-	el.innerHTML = Prism.highlight(code, Prism.languages.javascript, 'javascript');
+// Single always-editable CodeMirror instance. Pristine example code runs by
+// exampleId (pre-bundled server-side); any edit makes the doc "dirty" and it
+// runs as custom code (transpiled from TS server-side — see isDirty()).
+const editorView = new EditorView({
+	doc: PLACEHOLDER_CODE,
+	parent: editorContainer,
+	extensions: [
+		basicSetup,
+		keymap.of([indentWithTab]),
+		javascript({ typescript: true }),
+		indentUnit.of('\t'),
+		EditorView.theme({
+			'&': { fontSize: '13px' },
+			'.cm-content, .cm-gutter': { minHeight: '260px' },
+		}),
+		EditorView.updateListener.of((update) => {
+			if (update.docChanged) {
+				updateEditorStatus();
+				updateRunButton();
+			}
+		}),
+	],
 });
 
-function setEditorCode(code: string, editable: boolean): void {
-	jar.updateCode(code);
-	editorDiv.setAttribute('contenteditable', editable ? 'true' : 'false');
-	editorDiv.classList.toggle('editable', editable);
+function editorText(): string {
+	return editorView.state.doc.toString();
+}
+
+function setEditorText(code: string): void {
+	editorView.dispatch({
+		changes: { from: 0, to: editorView.state.doc.length, insert: code },
+	});
+}
+
+function selectedExample(): Example | undefined {
+	return state.selectedExampleId ? state.examples.find((ex) => ex.id === state.selectedExampleId) : undefined;
+}
+
+// "Dirty" means the doc no longer matches the selected example's pristine
+// source (or there's no selected example at all) — either way, a run must
+// go through the custom-code path rather than by exampleId.
+function isDirty(): boolean {
+	const example = selectedExample();
+	if (!example) return true;
+	return editorText() !== example.source;
+}
+
+function updateEditorStatus(): void {
+	const dirty = isDirty();
+	editorStatusEl.style.display = dirty && state.selectedExampleId ? 'inline' : 'none';
+	editorResetButton.style.display = dirty && state.selectedExampleId ? 'inline-block' : 'none';
 }
 
 // Initialize on page load
@@ -79,6 +121,12 @@ async function loadExamples(): Promise<void> {
 			optionEl.value = option.id;
 			optionEl.textContent = option.title;
 			exampleSelect.appendChild(optionEl);
+		}
+
+		// Auto-select the first example so the page never shows a placeholder.
+		if (examples.length > 0) {
+			exampleSelect.value = examples[0].id;
+			selectExample(examples[0].id);
 		}
 	} catch (error) {
 		console.error('Error loading examples:', error);
@@ -131,36 +179,35 @@ async function initializeTurnstile(): Promise<void> {
 }
 
 function setupEventListeners(): void {
-	exampleSelect.addEventListener('change', onExampleSelectChange);
-	customCodeToggle.addEventListener('change', onCustomCodeToggleChange);
+	exampleSelect.addEventListener('change', () => selectExample(exampleSelect.value || null));
+	editorResetButton.addEventListener('click', onResetClick);
 	runButton.addEventListener('click', onRunClick);
 	urlInput.addEventListener('input', updateRunButton);
 }
 
-function onExampleSelectChange(): void {
-	const selectedId = exampleSelect.value;
-	state.selectedExampleId = selectedId || null;
-	state.isCustomCode = false;
-	customCodeToggle.checked = false;
+function selectExample(selectedId: string | null): void {
+	state.selectedExampleId = selectedId;
 
 	if (selectedId) {
 		const example = state.examples.find((ex) => ex.id === selectedId);
 		if (example) {
-			displayExampleCode(example);
+			setEditorText(example.source);
 			displaySuggestedUrls(example.suggestedUrls);
 		}
 	} else {
-		setEditorCode('// Select an example or enable custom code to start', false);
+		setEditorText(PLACEHOLDER_CODE);
 		suggestedUrlsSection.style.display = 'none';
 	}
 
+	updateEditorStatus();
 	updateRunButton();
 }
 
-function displayExampleCode(example: Example): void {
-	// Example source is shown read-only; running an example sends its exampleId
-	// (the bundled code), not the displayed source.
-	setEditorCode(example.source, false);
+function onResetClick(): void {
+	const example = selectedExample();
+	if (example) setEditorText(example.source);
+	updateEditorStatus();
+	updateRunButton();
 }
 
 function displaySuggestedUrls(urls: ReadonlyArray<string>): void {
@@ -187,25 +234,10 @@ function displaySuggestedUrls(urls: ReadonlyArray<string>): void {
 	}
 }
 
-function onCustomCodeToggleChange(): void {
-	state.isCustomCode = customCodeToggle.checked;
-	state.selectedExampleId = null;
-	exampleSelect.value = '';
-
-	if (state.isCustomCode) {
-		setEditorCode('// Write your custom code here\nexport default (input) => {\n\treturn input.status;\n}', true);
-		suggestedUrlsSection.style.display = 'none';
-	} else {
-		setEditorCode('// Select an example or enable custom code to start', false);
-	}
-
-	updateRunButton();
-}
-
 function updateRunButton(): void {
 	const hasUrl = urlInput.value.trim().length > 0;
-	const hasCodeSelection = state.selectedExampleId !== null || state.isCustomCode;
-	runButton.disabled = !hasUrl || !hasCodeSelection || state.isRunning;
+	const hasCode = editorText().trim().length > 0;
+	runButton.disabled = !hasUrl || !hasCode || state.isRunning;
 }
 
 async function onRunClick(): Promise<void> {
@@ -217,10 +249,10 @@ async function onRunClick(): Promise<void> {
 	const url = urlInput.value.trim();
 	const payload: Record<string, unknown> = { url };
 
-	if (state.isCustomCode) {
-		payload.worker = { type: 'custom', customCode: jar.toString() };
-	} else if (state.selectedExampleId) {
+	if (!isDirty() && state.selectedExampleId) {
 		payload.worker = { type: 'example', exampleId: state.selectedExampleId };
+	} else {
+		payload.worker = { type: 'custom', customCode: editorText() };
 	}
 
 	// Get the Turnstile token if the widget is ready
@@ -304,6 +336,13 @@ function renderResults(data: RunResponse): void {
 		truncated.className = 'logs-truncated';
 		truncated.textContent = 'Logs were truncated';
 		logsContainerEl.appendChild(truncated);
+	}
+
+	if (data.inputTruncated) {
+		const inputTruncatedWarning = document.createElement('div');
+		inputTruncatedWarning.className = 'logs-truncated';
+		inputTruncatedWarning.textContent = '⚠ Fetched page exceeded the 2 MiB cap and was truncated before the transform ran.';
+		logsContainerEl.appendChild(inputTruncatedWarning);
 	}
 
 	// Timing info

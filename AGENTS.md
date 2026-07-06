@@ -11,7 +11,7 @@ library, and an embeddable widget.
 - TypeScript on Cloudflare Workers (`nodejs_compat`)
 - Dynamic Workers via `LOADER` (worker_loaders binding)
 - Durable Object `LogSession` (SQLite migration) + tail worker `LogTailer`
-- esbuild build pipeline; vanilla-TS frontend (CodeJar + Prism)
+- esbuild build pipeline; vanilla-TS frontend (CodeMirror 6, always-editable)
 - Testing: `@cloudflare/vitest-pool-workers` (workerd-backed)
 
 ## Commands
@@ -37,15 +37,28 @@ library, and an embeddable widget.
 ## Generated artifacts (committed, do not hand-edit)
 - `src/examples/manifest.generated.ts` - from `scripts/build-examples.mjs` (single
   source of truth is `src/examples/registry.ts`). Regenerate via `npm run build`.
+- `src/examples/deps.generated.ts` - from `scripts/build-examples.mjs`; bundled ESM
+  source for each shared dependency an edited example imports (see
+  `SHARED_DEP_SPECIFIERS` in `src/examples/registry.ts`), keyed by import specifier.
 - `public/app.js` - from `scripts/build-frontend.mjs`.
 - `worker-configuration.d.ts` - from `wrangler types`.
+
+## Custom code pipeline
+Edited/custom code arrives from the frontend as TypeScript (the editor never
+distinguishes TS from JS) and is transpiled server-side with `sucrase`
+(`src/runtime/transpile.ts`, `transpileUserCode`) before it reaches the loader.
+A pristine (unedited) example instead runs by `exampleId`, using its pre-bundled
+`manifest.generated.ts` code — no transpile step, no injected deps needed. See
+`src/runtime/AGENTS.md` for how edited-example imports (`linkedom`,
+`defuddle/node`, the markdown DOM polyfill) get resolved.
 
 ## Local vitest vs deploy gotchas
 The workerd test runtime does NOT reproduce production containment. These are
 deploy-verified only:
 - CPU limits (`cpuMs`) are NOT enforced locally — `cpu-spin` only fails on deploy.
-- Tail events are NOT delivered locally — `LogTailer` → `LogSession` log capture
-  is exercised by other means in tests, not via real tail.
+- Tail events ARE delivered under `wrangler dev` (verified 2026-07-05) — `LogTailer`
+  → `LogSession` log capture works end-to-end there. They are NOT delivered in the
+  vitest workers pool; tests exercise log capture by other means, not via real tail.
 - `RATE_LIMITER` is a no-op stub locally (always succeeds).
 - Turnstile gate (GATE 2 in `src/index.ts`) is bypassed when `ENVIRONMENT=development`
   (set in `.dev.vars`, so only during `wrangler dev`). Deploy uses `ENVIRONMENT=production`

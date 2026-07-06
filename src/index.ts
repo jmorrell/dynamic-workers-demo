@@ -1,7 +1,10 @@
 import { fetchTarget } from './runtime/fetch-target';
 import { runInLoader } from './runtime/loader';
+import { transpileUserCode, selectReferencedDeps } from './runtime/transpile';
 import type { RunErrorKind, RunRequestBody, UserWorker } from './runtime/types';
 import { listExamples, getExample } from './examples/manifest';
+import { SHARED_DEP_SPECIFIERS } from './examples/registry';
+import { GENERATED_DEP_MODULES } from './examples/deps.generated';
 import { LogSession } from './runtime/log-session';
 import { LogTailer } from './runtime/log-tailer';
 import { LOG_MAX_LINES, LOG_MAX_BYTES } from './runtime/log-types';
@@ -105,9 +108,7 @@ async function handleRun(request: Request, env: Env, ctx: ExecutionContext): Pro
 		return jsonError(400, 'bad_request', 'Missing required field: worker');
 	}
 
-	const { type: workerType, exampleId, customCode } = worker as Partial<
-		{ type?: unknown } & Record<'exampleId' | 'customCode', unknown>
-	>;
+	const { type: workerType, exampleId, customCode } = worker as Partial<{ type?: unknown } & Record<'exampleId' | 'customCode', unknown>>;
 
 	let userWorker: UserWorker;
 	if (workerType === 'example') {
@@ -129,6 +130,10 @@ async function handleRun(request: Request, env: Env, ctx: ExecutionContext): Pro
 	// Saved examples pin their own compat date; custom code falls back to
 	// runInLoader's default (see src/runtime/loader.ts DEFAULT_COMPAT_DATE).
 	let compatDate: string | undefined;
+	// Only populated for edited/custom code (see below) — the shared deps its
+	// imports need, since a pristine example's deps are already baked into
+	// example.code by the build (scripts/build-examples.mjs).
+	let extraModules: Record<string, string> | undefined;
 
 	if (userWorker.type === 'example') {
 		const example = getExample(userWorker.exampleId);
@@ -139,7 +144,32 @@ async function handleRun(request: Request, env: Env, ctx: ExecutionContext): Pro
 		code = example.code;
 		compatDate = example.compatDate;
 	} else {
-		code = userWorker.customCode;
+		// Custom/edited code arrives as TypeScript (the editor never distinguishes
+		// TS from JS); transpile before handing it to the loader.
+		const transpiled = transpileUserCode(userWorker.customCode);
+		if (transpiled.type === 'failure') {
+			return new Response(
+				JSON.stringify({
+					ok: false,
+					error: transpiled.error,
+					logs: [],
+					logsTruncated: false,
+					timingMs: 0,
+					inputTruncated: false,
+				}),
+				{ status: 200, headers: { 'content-type': 'application/json' } },
+			);
+		}
+
+		code = transpiled.code;
+
+		const referencedDeps = selectReferencedDeps(code, SHARED_DEP_SPECIFIERS);
+		if (referencedDeps.length > 0) {
+			extraModules = {};
+			for (const dep of referencedDeps) {
+				extraModules[dep.specifier] = (GENERATED_DEP_MODULES as Record<string, string>)[dep.specifier];
+			}
+		}
 	}
 
 	// Fetch target URL
@@ -154,6 +184,7 @@ async function handleRun(request: Request, env: Env, ctx: ExecutionContext): Pro
 				logs: [],
 				logsTruncated: false,
 				timingMs: 0,
+				inputTruncated: false,
 			}),
 			{ status: 200, headers: { 'content-type': 'application/json' } },
 		);
@@ -164,7 +195,7 @@ async function handleRun(request: Request, env: Env, ctx: ExecutionContext): Pro
 
 	// Run code in loader
 	const startTime = performance.now();
-	const result = await runInLoader(env, fetchOutcome.input, code, runId, ctx, compatDate);
+	const result = await runInLoader(env, fetchOutcome.input, code, runId, ctx, compatDate, extraModules);
 	const timingMs = Math.round(performance.now() - startTime);
 
 	// Read logs from LogSession
@@ -178,6 +209,7 @@ async function handleRun(request: Request, env: Env, ctx: ExecutionContext): Pro
 			logs: logs.lines,
 			logsTruncated: logs.truncated,
 			timingMs,
+			inputTruncated: fetchOutcome.input.truncated,
 		}),
 		{ status: 200, headers: { 'content-type': 'application/json' } },
 	);

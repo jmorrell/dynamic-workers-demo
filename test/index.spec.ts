@@ -1,8 +1,24 @@
 import { env, createExecutionContext, waitOnExecutionContext, SELF } from 'cloudflare:test';
-import { describe, it, expect, beforeEach, vi } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import worker, { setTurnstileVerifier } from '../src/index';
+import { getExample } from '../src/examples/manifest';
+import articleHtml from './examples/fixtures/article.html?raw';
 
 const IncomingRequest = Request<unknown, IncomingRequestCfProperties>;
+
+function stubTargetFetch(body: string, contentType = 'text/html'): void {
+	vi.stubGlobal(
+		'fetch',
+		vi.fn(() =>
+			Promise.resolve(
+				new Response(body, {
+					status: 200,
+					headers: { 'content-type': contentType },
+				}),
+			),
+		),
+	);
+}
 
 describe('GET /api/examples handler', () => {
 	it('returns 200 with example list', async () => {
@@ -278,6 +294,93 @@ describe('POST /api/run handler', () => {
 				expect(data).toHaveProperty('result');
 				expect(data).toHaveProperty('timingMs');
 			}
+		});
+	});
+
+	describe('TypeScript custom code (transpile pipeline)', () => {
+		afterEach(() => {
+			vi.unstubAllGlobals();
+		});
+
+		it('POST /api/run with custom TypeScript code (type annotations) succeeds end-to-end', async () => {
+			stubTargetFetch('<html>hi</html>');
+
+			const tsCode = `
+				type Input = { status: number };
+				interface Result { doubled: number }
+				export default (input: Input): Result => ({ doubled: input.status * 2 });
+			`;
+			const request = new IncomingRequest('http://example.com/api/run', {
+				method: 'POST',
+				// Distinct CF-Connecting-IP so this doesn't share the 'anonymous'
+				// rate-limit bucket with other tests in this file.
+				headers: { 'CF-Connecting-IP': '203.0.113.210' },
+				body: JSON.stringify({
+					worker: { type: 'custom', customCode: tsCode },
+					url: 'http://example.com/test',
+				}),
+			});
+			const ctx = createExecutionContext();
+			const response = await worker.fetch(request, env, ctx);
+			await waitOnExecutionContext(ctx);
+
+			expect(response.status).toBe(200);
+			const data = await response.json<{ ok: boolean; result?: unknown; error?: unknown }>();
+			expect(data.ok).toBe(true);
+			expect(data.result).toEqual({ doubled: 400 });
+		});
+
+		it('returns ok:false with compile_failed for custom code with a TS syntax error', async () => {
+			stubTargetFetch('<html>hi</html>');
+
+			const brokenCode = 'export default (input) => { const x = ; }';
+			const request = new IncomingRequest('http://example.com/api/run', {
+				method: 'POST',
+				headers: { 'CF-Connecting-IP': '203.0.113.211' },
+				body: JSON.stringify({
+					worker: { type: 'custom', customCode: brokenCode },
+					url: 'http://example.com/test',
+				}),
+			});
+			const ctx = createExecutionContext();
+			const response = await worker.fetch(request, env, ctx);
+			await waitOnExecutionContext(ctx);
+
+			expect(response.status).toBe(200);
+			const data = await response.json<{ ok: boolean; error?: { kind: string; message: string } }>();
+			expect(data.ok).toBe(false);
+			expect(data.error?.kind).toBe('compile_failed');
+		});
+
+		it('runs the markdown example source verbatim as edited custom code (sucrase + injected deps + polyfill ordering)', async () => {
+			// Simulates a user selecting the markdown example, editing nothing, and
+			// running it as custom code — exercising the exact source (with its
+			// 'linkedom' / 'defuddle/node' / './markdown-dom-polyfill' imports and
+			// `import type` from '../runtime/types') through transpileUserCode +
+			// the injected shared dep modules, rather than the pre-bundled path.
+			const example = getExample('markdown');
+			expect(example).toBeDefined();
+			if (!example) return;
+
+			stubTargetFetch(articleHtml);
+
+			const request = new IncomingRequest('http://example.com/api/run', {
+				method: 'POST',
+				headers: { 'CF-Connecting-IP': '203.0.113.212' },
+				body: JSON.stringify({
+					worker: { type: 'custom', customCode: example.source },
+					url: 'http://example.com/article',
+				}),
+			});
+			const ctx = createExecutionContext();
+			const response = await worker.fetch(request, env, ctx);
+			await waitOnExecutionContext(ctx);
+
+			expect(response.status).toBe(200);
+			const data = await response.json<{ ok: boolean; result?: { markdown?: string }; error?: { kind: string; message: string } }>();
+			expect(data.ok).toBe(true);
+			expect(typeof data.result?.markdown).toBe('string');
+			expect((data.result?.markdown ?? '').length).toBeGreaterThan(0);
 		});
 	});
 

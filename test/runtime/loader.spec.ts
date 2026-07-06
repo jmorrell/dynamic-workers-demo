@@ -366,9 +366,9 @@ describe('runInLoader', () => {
 		});
 
 		it('reflects fresh input when the same code is run with different inputs', async () => {
-			// Regression: the loader caches the compiled worker by code hash. INPUT must
-			// be delivered per invocation (not baked into the cached worker env), or a
-			// second run of identical code returns the first run's stale input/result.
+			// Regression: even though each run now gets its own loader id (code hash
+			// + runId), INPUT must still be delivered per invocation (not baked into
+			// the worker's env), since env is shared for the isolate's lifetime.
 			const code = 'export default (input) => input.url';
 			const first = await runInLoader(env, { ...testInput, url: 'https://first.example' }, code, crypto.randomUUID(), ctx);
 			const second = await runInLoader(env, { ...testInput, url: 'https://second.example' }, code, crypto.randomUUID(), ctx);
@@ -462,17 +462,18 @@ describe('runInLoader', () => {
 		});
 	});
 
-	describe('Caching via hashCode', () => {
-		it('identical code reuses warm isolate on second call', async () => {
+	describe('Loader id scoping', () => {
+		it('identical code run twice (separate runIds) each succeed independently', async () => {
+			// The loader id is scoped per-run (code hash + runId), so this does NOT
+			// reuse a single isolate across the two calls — each run gets its own,
+			// so its tail binding attributes logs to the right runId. Verifies the
+			// two independent isolates still produce consistent results for the
+			// same code, not that they share one.
 			const code = 'export default (input) => input.status';
 
-			// First call
 			const result1 = await runInLoader(env, testInput, code, crypto.randomUUID(), ctx);
-
-			// Second call with same code
 			const result2 = await runInLoader(env, testInput, code, crypto.randomUUID(), ctx);
 
-			// Both should succeed and return same value
 			expect(result1.type).toBe('success');
 			expect(result2.type).toBe('success');
 			if (result1.type === 'success' && result2.type === 'success') {
@@ -493,6 +494,60 @@ describe('runInLoader', () => {
 			if (result1.type === 'success' && result2.type === 'success') {
 				expect(result1.value).toBe(1);
 				expect(result2.value).toBe(2);
+			}
+		});
+	});
+
+	describe('extraModules', () => {
+		// Verified resolution shapes (see AGENTS.md / task spec): a module key
+		// must end in '.js' OR be the typed { js } object form; with the typed
+		// form, import specifiers resolve by EXACT key match, no automatic '.js'
+		// suffix resolution.
+		it('resolves a bare specifier (e.g. "linkedom") to a typed module keyed by that exact specifier', async () => {
+			const code = "import { greeting } from 'linkedom';\nexport default () => greeting;";
+			const extraModules = { linkedom: 'export const greeting = "hello from stub linkedom";' };
+
+			const result = await runInLoader(env, testInput, code, crypto.randomUUID(), ctx, undefined, extraModules);
+
+			expect(result.type).toBe('success');
+			if (result.type === 'success') {
+				expect(result.value).toBe('hello from stub linkedom');
+			}
+		});
+
+		it('resolves a subpath specifier (e.g. "defuddle/node")', async () => {
+			const code = "import { greeting } from 'defuddle/node';\nexport default () => greeting;";
+			const extraModules = { 'defuddle/node': 'export const greeting = "hello from stub defuddle/node";' };
+
+			const result = await runInLoader(env, testInput, code, crypto.randomUUID(), ctx, undefined, extraModules);
+
+			expect(result.type).toBe('success');
+			if (result.type === 'success') {
+				expect(result.value).toBe('hello from stub defuddle/node');
+			}
+		});
+
+		it('resolves a relative import by dropping "./" and any extension from the key', async () => {
+			const code = "import { greeting } from './markdown-dom-polyfill';\nexport default () => greeting;";
+			const extraModules = { 'markdown-dom-polyfill': 'export const greeting = "hello from stub polyfill";' };
+
+			const result = await runInLoader(env, testInput, code, crypto.randomUUID(), ctx, undefined, extraModules);
+
+			expect(result.type).toBe('success');
+			if (result.type === 'success') {
+				expect(result.value).toBe('hello from stub polyfill');
+			}
+		});
+
+		it('cannot override user.js', async () => {
+			const code = 'export default () => "real user code";';
+			const extraModules = { 'user.js': 'export default () => "hijacked";' };
+
+			const result = await runInLoader(env, testInput, code, crypto.randomUUID(), ctx, undefined, extraModules);
+
+			expect(result.type).toBe('success');
+			if (result.type === 'success') {
+				expect(result.value).toBe('real user code');
 			}
 		});
 	});

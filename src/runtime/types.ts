@@ -9,9 +9,7 @@ export type RunInput = {
 	truncated: boolean;
 };
 
-export type UserWorker =
-	| { type: 'custom'; customCode: string }
-	| { type: 'example'; exampleId: string };
+export type UserWorker = { type: 'custom'; customCode: string } | { type: 'example'; exampleId: string };
 
 export type RunRequestBody = {
 	url: string;
@@ -31,7 +29,8 @@ export type RunErrorKind =
 	| 'rate_limited'
 	| 'turnstile_failed'
 	| 'bad_request'
-	| 'fetch_failed';
+	| 'fetch_failed'
+	| 'compile_failed';
 
 export type RunError = {
 	kind: RunErrorKind;

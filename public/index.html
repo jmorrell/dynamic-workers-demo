@@ -1,282 +1,254 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="en">
-<head>
-	<meta charset="UTF-8" />
-	<meta name="viewport" content="width=device-width, initial-scale=1.0" />
-	<title>Dynamic Workers Demo</title>
-	<style>
-		* {
-			box-sizing: border-box;
-		}
+	<head>
+		<meta charset="UTF-8" />
+		<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+		<title>Dynamic Workers Demo</title>
+		<style>
+			* {
+				box-sizing: border-box;
+			}
 
-		/* Prism token colors for the CodeJar editor (highlighting is emitted as
-		   <span class="token ..."> by Prism in frontend/main.ts). */
-		.token.comment,
-		.token.prolog,
-		.token.doctype,
-		.token.cdata {
-			color: #6a737d;
-		}
-		.token.punctuation {
-			color: #24292e;
-		}
-		.token.keyword,
-		.token.boolean,
-		.token.atrule {
-			color: #d73a49;
-		}
-		.token.string,
-		.token.char,
-		.token.attr-value {
-			color: #032f62;
-		}
-		.token.function,
-		.token.class-name {
-			color: #6f42c1;
-		}
-		.token.number,
-		.token.constant,
-		.token.symbol {
-			color: #005cc5;
-		}
-		.token.operator,
-		.token.entity,
-		.token.url {
-			color: #d73a49;
-		}
+			body {
+				font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+				font-size: 14px;
+				line-height: 1.5;
+				color: #333;
+				margin: 0;
+				padding: 16px;
+				background: #f5f5f5;
+			}
 
-		body {
-			font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-			font-size: 14px;
-			line-height: 1.5;
-			color: #333;
-			margin: 0;
-			padding: 16px;
-			background: #f5f5f5;
-		}
+			h1 {
+				margin-top: 0;
+				margin-bottom: 16px;
+				font-size: 20px;
+			}
 
-		h1 {
-			margin-top: 0;
-			margin-bottom: 16px;
-			font-size: 20px;
-		}
+			section {
+				margin-bottom: 16px;
+			}
 
-		section {
-			margin-bottom: 16px;
-		}
+			label {
+				display: block;
+				margin-bottom: 4px;
+				font-weight: 600;
+				color: #222;
+			}
 
-		label {
-			display: block;
-			margin-bottom: 4px;
-			font-weight: 600;
-			color: #222;
-		}
+			select,
+			input[type='text'],
+			textarea {
+				width: 100%;
+				padding: 8px;
+				font-family: 'Monaco', 'Menlo', 'Consolas', monospace;
+				font-size: 13px;
+				border: 1px solid #ccc;
+				border-radius: 4px;
+				background: white;
+			}
 
-		select,
-		input[type='text'],
-		textarea,
-		.editor {
-			width: 100%;
-			padding: 8px;
-			font-family: 'Monaco', 'Menlo', 'Consolas', monospace;
-			font-size: 13px;
-			border: 1px solid #ccc;
-			border-radius: 4px;
-			background: white;
-		}
+			input[type='text'] {
+				padding: 10px;
+				font-family: inherit;
+			}
 
-		input[type='text'] {
-			padding: 10px;
-			font-family: inherit;
-		}
+			.chips {
+				display: flex;
+				flex-wrap: wrap;
+				gap: 8px;
+				margin-top: 8px;
+				margin-bottom: 8px;
+			}
 
-		.chips {
-			display: flex;
-			flex-wrap: wrap;
-			gap: 8px;
-			margin-top: 8px;
-			margin-bottom: 8px;
-		}
+			.chip {
+				padding: 6px 12px;
+				background: #e0e0e0;
+				border: 1px solid #999;
+				border-radius: 16px;
+				cursor: pointer;
+				font-size: 12px;
+				white-space: nowrap;
+				transition: background-color 0.2s;
+			}
 
-		.chip {
-			padding: 6px 12px;
-			background: #e0e0e0;
-			border: 1px solid #999;
-			border-radius: 16px;
-			cursor: pointer;
-			font-size: 12px;
-			white-space: nowrap;
-			transition: background-color 0.2s;
-		}
+			.chip:hover {
+				background: #d0d0d0;
+			}
 
-		.chip:hover {
-			background: #d0d0d0;
-		}
+			.chip:active {
+				background: #c0c0c0;
+			}
 
-		.chip:active {
-			background: #c0c0c0;
-		}
+			.editor-label-row {
+				display: flex;
+				align-items: center;
+				gap: 8px;
+				margin-bottom: 4px;
+			}
 
-		.toggle-group {
-			display: flex;
-			align-items: center;
-			gap: 8px;
-			margin-top: 8px;
-			margin-bottom: 8px;
-		}
+			.editor-label-row label {
+				margin-bottom: 0;
+			}
 
-		input[type='checkbox'] {
-			cursor: pointer;
-		}
+			#editor-status {
+				display: none;
+				font-size: 12px;
+				font-style: italic;
+				color: #a66300;
+			}
 
-		button {
-			padding: 10px 16px;
-			background: #0066cc;
-			color: white;
-			border: none;
-			border-radius: 4px;
-			cursor: pointer;
-			font-size: 14px;
-			font-weight: 600;
-			transition: background-color 0.2s;
-		}
+			#editor-reset {
+				display: none;
+				padding: 2px 10px;
+				font-size: 12px;
+				font-weight: 400;
+			}
 
-		button:hover:not(:disabled) {
-			background: #0052a3;
-		}
+			button {
+				padding: 10px 16px;
+				background: #0066cc;
+				color: white;
+				border: none;
+				border-radius: 4px;
+				cursor: pointer;
+				font-size: 14px;
+				font-weight: 600;
+				transition: background-color 0.2s;
+			}
 
-		button:disabled {
-			background: #ccc;
-			cursor: not-allowed;
-		}
+			button:hover:not(:disabled) {
+				background: #0052a3;
+			}
 
-		#editor {
-			min-height: 200px;
-			overflow-y: auto;
-			border: 1px solid #ccc;
-			border-radius: 4px;
-			padding: 8px;
-			background: white;
-		}
+			button:disabled {
+				background: #ccc;
+				cursor: not-allowed;
+			}
 
-		#editor.editable {
-			color: #333;
-			outline: none;
-		}
+			.cm-editor {
+				border: 1px solid #ccc;
+				border-radius: 4px;
+				background: white;
+				min-height: 260px;
+				font-family: 'Monaco', 'Menlo', 'Consolas', monospace;
+				font-size: 13px;
+			}
 
-		#results {
-			background: white;
-			border: 1px solid #ccc;
-			border-radius: 4px;
-			padding: 12px;
-			margin-top: 16px;
-		}
+			.cm-editor.cm-focused {
+				outline: 2px solid #0066cc33;
+			}
 
-		#results.empty {
-			display: none;
-		}
+			#results {
+				background: white;
+				border: 1px solid #ccc;
+				border-radius: 4px;
+				padding: 12px;
+				margin-top: 16px;
+			}
 
-		#results h3 {
-			margin: 0 0 8px 0;
-			font-size: 14px;
-			color: #0066cc;
-		}
+			#results.empty {
+				display: none;
+			}
 
-		#results.error h3 {
-			color: #c00;
-		}
+			#results h3 {
+				margin: 0 0 8px 0;
+				font-size: 14px;
+				color: #0066cc;
+			}
 
-		#results.ok h3 {
-			color: #060;
-		}
+			#results.error h3 {
+				color: #c00;
+			}
 
-		pre {
-			background: #f0f0f0;
-			border: 1px solid #ddd;
-			border-radius: 4px;
-			padding: 8px;
-			overflow-x: auto;
-			white-space: pre-wrap;
-			word-wrap: break-word;
-			margin: 8px 0;
-			font-size: 12px;
-		}
+			#results.ok h3 {
+				color: #060;
+			}
 
-		.timing {
-			color: #666;
-			font-size: 12px;
-			margin-top: 8px;
-		}
+			pre {
+				background: #f0f0f0;
+				border: 1px solid #ddd;
+				border-radius: 4px;
+				padding: 8px;
+				overflow-x: auto;
+				white-space: pre-wrap;
+				word-wrap: break-word;
+				margin: 8px 0;
+				font-size: 12px;
+			}
 
-		.logs-truncated {
-			background: #fffacd;
-			border: 1px solid #daa;
-			border-radius: 4px;
-			padding: 8px;
-			margin-top: 8px;
-			color: #666;
-			font-size: 12px;
-		}
+			.timing {
+				color: #666;
+				font-size: 12px;
+				margin-top: 8px;
+			}
 
-		.error-text {
-			color: #c00;
-			font-weight: 600;
-		}
+			.logs-truncated {
+				background: #fffacd;
+				border: 1px solid #daa;
+				border-radius: 4px;
+				padding: 8px;
+				margin-top: 8px;
+				color: #666;
+				font-size: 12px;
+			}
 
-		.success-text {
-			color: #060;
-			font-weight: 600;
-		}
-	</style>
-</head>
-<body>
-	<h1>Dynamic Workers Demo</h1>
+			.error-text {
+				color: #c00;
+				font-weight: 600;
+			}
 
-	<section>
-		<label for="example">Choose an Example:</label>
-		<select id="example">
-			<option value="">-- Select an example --</option>
-		</select>
-	</section>
+			.success-text {
+				color: #060;
+				font-weight: 600;
+			}
+		</style>
+	</head>
+	<body>
+		<h1>Dynamic Workers Demo</h1>
 
-	<section id="suggested-urls-section" style="display: none">
-		<label>Suggested URLs:</label>
-		<div class="chips" id="suggested-urls"></div>
-	</section>
+		<section>
+			<label for="example">Choose an Example:</label>
+			<select id="example">
+				<option value="">-- Select an example --</option>
+			</select>
+		</section>
 
-	<section>
-		<label for="url">Target URL:</label>
-		<input type="text" id="url" placeholder="https://example.com" />
-	</section>
+		<section id="suggested-urls-section" style="display: none">
+			<label>Suggested URLs:</label>
+			<div class="chips" id="suggested-urls"></div>
+		</section>
 
-	<section>
-		<div class="toggle-group">
-			<input type="checkbox" id="custom-code-toggle" />
-			<label for="custom-code-toggle" style="margin-bottom: 0">Custom Code</label>
-		</div>
-	</section>
+		<section>
+			<label for="url">Target URL:</label>
+			<input type="text" id="url" placeholder="https://example.com" />
+		</section>
 
-	<section>
-		<label for="editor">Code:</label>
-		<div id="editor">// Select an example or enable custom code to start</div>
-	</section>
+		<section>
+			<div class="editor-label-row">
+				<label for="editor" style="margin-bottom: 0">Code (JavaScript or TypeScript):</label>
+				<span id="editor-status">edited — runs as custom code</span>
+				<button type="button" id="editor-reset">Reset</button>
+			</div>
+			<div id="editor"></div>
+		</section>
 
-	<section>
-		<div id="turnstile"></div>
-	</section>
+		<section>
+			<div id="turnstile"></div>
+		</section>
 
-	<section>
-		<button id="run-button" disabled>Run</button>
-	</section>
+		<section>
+			<button id="run-button" disabled>Run</button>
+		</section>
 
-	<section id="results" class="empty">
-		<h3 id="results-title"></h3>
-		<div id="results-body"></div>
-		<div id="logs-container"></div>
-		<div id="timing-info"></div>
-	</section>
+		<section id="results" class="empty">
+			<h3 id="results-title"></h3>
+			<div id="results-body"></div>
+			<div id="logs-container"></div>
+			<div id="timing-info"></div>
+		</section>
 
-	<script src="https://challenges.cloudflare.com/turnstile/v0/api.js" async defer></script>
-	<script src="/app.js"></script>
-</body>
+		<script src="https://challenges.cloudflare.com/turnstile/v0/api.js" async defer></script>
+		<script src="/app.js"></script>
+	</body>
 </html>

@@ -10,12 +10,23 @@ export type ExampleMeta = {
 	readonly compatDate: string;
 };
 
+// Modules injected into the loader for edited (custom) example code, since
+// its imports ('linkedom', 'defuddle/node', './markdown-dom-polyfill') only
+// resolve at bundle time for pristine examples (baked into manifest.code).
+// Single source of truth for scripts/build-examples.mjs (bundles each entry
+// into deps.generated.ts) and src/index.ts (selects by specifier at runtime).
+export const SHARED_DEP_SPECIFIERS: ReadonlyArray<{ readonly specifier: string; readonly entry: string }> = [
+	{ specifier: 'linkedom', entry: 'linkedom' },
+	{ specifier: 'defuddle/node', entry: 'defuddle/node' },
+	{ specifier: 'markdown-dom-polyfill', entry: 'src/examples/markdown-dom-polyfill.ts' },
+];
+
 export const EXAMPLE_REGISTRY: ReadonlyArray<ExampleMeta> = [
 	{
 		id: 'markdown',
 		title: 'Readable Markdown',
 		description: 'Extracts clean, readable markdown content from any article or webpage using Defuddle.',
-		suggestedUrls: ['https://www.theverge.com/2024/1/1/24184299/ai-news-2024', 'https://www.cnbc.com/2024/01/01/tech-news-2024/'],
+		suggestedUrls: ['https://www.theverge.com/column/960600/xbox-is-a-disaster', 'https://en.wikipedia.org/wiki/Cloudflare'],
 		entry: 'src/examples/markdown.ts',
 		compatDate: '2026-06-22',
 	},

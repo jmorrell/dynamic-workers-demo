@@ -115,7 +115,7 @@ describe('fetchTarget', () => {
 		});
 
 		it('sets truncated true when body exceeds maxBytes', async () => {
-			const largeBody = 'x'.repeat(300 * 1024); // 300KB, exceeds 256KB default
+			const largeBody = 'x'.repeat(3 * 1024 * 1024); // 3MiB, exceeds 2MiB default
 			vi.stubGlobal(
 				'fetch',
 				vi.fn(() =>
@@ -133,7 +133,7 @@ describe('fetchTarget', () => {
 			expect(result.type).toBe('success');
 			if (result.type === 'success') {
 				expect(result.input.truncated).toBe(true);
-				expect(result.input.body.length).toBeLessThanOrEqual(256 * 1024);
+				expect(result.input.body.length).toBeLessThanOrEqual(2 * 1024 * 1024);
 			}
 		});
 
