@@ -80,10 +80,11 @@ the target URL, captures the sandbox's logs, and enforces abuse gates.
   with real storeIds because those must be uuids — caps `STORE_CAP_PER_IP` (5)
   active stores per IP (`touchStore`, LRU; an evicted store's supervisor is torn
   down via `selfDestruct()`). Every storage run resets a sliding self-destruct
-  alarm (now + 1h, `STORE_TTL_MS`); on fire the supervisor deletes its facets,
-  clears its bookkeeping, `deleteAlarm()`, then best-effort `deleteAll()` —
-  stores are ephemeral BY DESIGN (~1h past the last run). LRU selection math is
-  pure (`selectEvictions`, core).
+  alarm (now + 1h, `STORE_TTL_MS`); on fire the supervisor deletes its facets
+  (awaited), clears its bookkeeping, `deleteAlarm()`, and calls `deleteAll()`
+  ONLY when it deleted no facets (see the deleteAll gotcha) — stores are
+  ephemeral BY DESIGN (~1h past the last run). LRU selection math is pure
+  (`selectEvictions`, core).
 - **Gate contract**: `CapabilityGate` (WorkerEntrypoint, reached via
   `ctx.exports.CapabilityGate({ props: { runId, allowedUrls, fetchDepth, maxFetches } })`,
   attached as the loaded worker's `env.GATE`). `fetchText(url) → { status,
@@ -277,10 +278,15 @@ the target URL, captures the sandbox's logs, and enforces abuse gates.
   wrangler-dev/deploy-verified only; pool tests cover pure logic + supervisor
   bookkeeping.
 - **`ctx.storage.deleteAll()` throws "internal error" after `ctx.facets.delete()`**
-  on local workerd (spike-verified 2026-07-06; deploy re-verification pending).
-  `StorageHost._teardown` therefore deletes its bookkeeping rows explicitly,
-  then calls `deleteAll()` best-effort in try/catch — a throw leaves only tiny
-  idle residue.
+  on local workerd (spike-verified 2026-07-06; deploy re-verification pending) —
+  and the FAILED attempt wedges the live DO instance: every later storage/facet
+  op in it errors "internal error" until eviction (live-repro'd 2026-07-07 via
+  DELETE /api/store → subsequent runs failing). `StorageHost._teardown`
+  therefore deletes its bookkeeping rows explicitly and SKIPS `deleteAll()`
+  whenever it deleted facets (the facet DBs — the storage mass — are already
+  gone; residue is a near-empty supervisor DB with no alarm). The registry
+  singleton never deletes facets, so it still runs the full `deleteAll()`.
 - **Deleting a never-RPC'd facet throws "internal error"** — the supervisor only
   tracks a facet AFTER its first successful `run` RPC, and every
-  `ctx.facets.delete` is individually try/caught.
+  `ctx.facets.delete` is individually try/caught AND awaited (an un-awaited
+  delete floats past the catch and races the facet's next mount).

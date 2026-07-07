@@ -98,7 +98,7 @@ export class StorageHost extends DurableObject<Env> {
 			// Track the facet only AFTER a successful RPC (spike: deleting a
 			// never-RPC'd facet throws internal error). A structured-failure result
 			// still means the facet mounted and ran, so it's trackable.
-			this._trackFacet(storeKey);
+			await this._trackFacet(storeKey);
 			await this._resetAlarm();
 
 			return { result, gateSpans: collectGateSpans(runId) };
@@ -161,7 +161,7 @@ export class StorageHost extends DurableObject<Env> {
 	}
 
 	/** Record a facet as RPC'd; LRU-evict beyond STORE_FACET_CAP via ctx.facets.delete. */
-	private _trackFacet(name: string): void {
+	private async _trackFacet(name: string): Promise<void> {
 		const now = Date.now();
 		const rows = this._readFacets().filter((f) => f.name !== name);
 		rows.push({ name, lastUsed: now });
@@ -172,9 +172,11 @@ export class StorageHost extends DurableObject<Env> {
 		);
 		const victimSet = new Set(victims);
 		for (const victim of victims) {
-			// try/catch each: ctx.facets.delete can throw internal error (spike).
+			// try/catch each: ctx.facets.delete can reject (internal error, spike).
+			// MUST be awaited — an un-awaited delete floats past the try/catch and
+			// races the next mount of the same facet.
 			try {
-				this.ctx.facets?.delete(victim);
+				await this.ctx.facets?.delete(victim);
 			} catch {
 				/* best-effort eviction */
 			}
@@ -188,29 +190,43 @@ export class StorageHost extends DurableObject<Env> {
 	}
 
 	/**
-	 * Teardown order (spike-decided): delete each tracked facet (try/catch each —
-	 * a never-RPC'd facet, or one already gone, throws) → drop our own bookkeeping
-	 * rows → deleteAlarm() → best-effort deleteAll() in try/catch.
+	 * Teardown order (spike-decided, then live-refined): delete each tracked facet
+	 * (awaited, try/catch each — a never-RPC'd facet, or one already gone, throws)
+	 * → drop our own bookkeeping rows → deleteAlarm() → deleteAll() ONLY when no
+	 * facet deletes happened.
 	 *
-	 * deleteAll THROWS after ctx.facets.delete on local workerd (spike-verified;
-	 * possibly a local quirk — deploy re-verification is an open item). We swallow
-	 * it: our bookkeeping rows are already deleted explicitly above, so even if
-	 * deleteAll throws only a tiny, idle residue remains. The registry singleton
-	 * never deletes facets, so its deleteAll succeeds and clears its ip rows.
+	 * deleteAll THROWS after ctx.facets.delete (spike-verified), and — worse — the
+	 * failed attempt wedges the live DO instance: every later storage/facet op in
+	 * it errors `internal error`, so the store looks broken until the instance is
+	 * evicted (live-repro'd via DELETE /api/store → next runs failing). So a store
+	 * supervisor that just deleted facets SKIPS deleteAll: the facet DBs (the
+	 * actual storage mass) are already gone and the bookkeeping rows were deleted
+	 * explicitly above; the residue is a near-empty supervisor DB with no alarm.
+	 * The registry singleton never deletes facets, so it still gets the full
+	 * deleteAll and truly evaporates. Deploy re-verification of the deleteAll
+	 * behavior remains an open item (HANDOFF).
 	 */
 	private async _teardown(): Promise<void> {
 		const facets = this.ctx.facets;
-		for (const { name } of this._readFacets()) {
+		const tracked = this._readFacets();
+		for (const { name } of tracked) {
+			// MUST be awaited: an un-awaited delete floats past the try/catch, lets
+			// selfDestruct return with the deletion still in flight (the next mount
+			// of the same facet then races it), and turns a rejection into an
+			// unhandled-promise error instead of this catch.
 			try {
-				facets?.delete(name);
+				await facets?.delete(name);
 			} catch {
 				/* facet may never have been RPC'd or already gone */
 			}
 		}
-		// Clear our own bookkeeping explicitly so a throwing deleteAll can't leave
-		// a stale facet registry behind to re-drive deletes.
+		// Explicitly drop EVERY bookkeeping row (facet registry + any ip rows) —
+		// clearing must not depend on deleteAll, which is skipped below whenever
+		// facets were deleted.
 		try {
-			this.ctx.storage.kv.delete(FACETS_KEY);
+			for (const [key] of this.ctx.storage.kv.list()) {
+				this.ctx.storage.kv.delete(key);
+			}
 		} catch {
 			/* best-effort */
 		}
@@ -219,10 +235,12 @@ export class StorageHost extends DurableObject<Env> {
 		} catch {
 			/* best-effort */
 		}
-		try {
-			await this.ctx.storage.deleteAll();
-		} catch {
-			/* spike: deleteAll throws after facets.delete on local workerd — swallow */
+		if (tracked.length === 0) {
+			try {
+				await this.ctx.storage.deleteAll();
+			} catch {
+				/* best-effort */
+			}
 		}
 	}
 }

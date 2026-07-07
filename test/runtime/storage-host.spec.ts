@@ -131,11 +131,11 @@ describe('StorageHost (vitest pool)', () => {
 		it('LRU-evicts the oldest facet row beyond STORE_FACET_CAP', async () => {
 			const stub = env.STORAGE_HOST.get(env.STORAGE_HOST.idFromName('facet-track-lru'));
 			await runInDurableObject(stub, async (instance: StorageHost, state) => {
-				const track = (name: string) => (instance as unknown as { _trackFacet(name: string): void })._trackFacet(name);
+				const track = (name: string) => (instance as unknown as { _trackFacet(name: string): Promise<void> })._trackFacet(name);
 				const seeded = Array.from({ length: STORE_FACET_CAP }, (_, i) => `store-${i}`);
 				// Seed with strictly increasing lastUsed stamps.
 				state.storage.kv.put('facets', JSON.stringify(seeded.map((name, i) => ({ name, lastUsed: i + 1 }))));
-				track('one-more');
+				await track('one-more');
 				const rows = JSON.parse(state.storage.kv.get('facets') as string) as Array<{ name: string }>;
 				expect(rows).toHaveLength(STORE_FACET_CAP);
 				const names = rows.map((r) => r.name);
@@ -147,10 +147,10 @@ describe('StorageHost (vitest pool)', () => {
 		it('re-tracking an existing facet refreshes it without growing the set', async () => {
 			const stub = env.STORAGE_HOST.get(env.STORAGE_HOST.idFromName('facet-track-refresh'));
 			await runInDurableObject(stub, async (instance: StorageHost, state) => {
-				const track = (name: string) => (instance as unknown as { _trackFacet(name: string): void })._trackFacet(name);
-				track('a');
-				track('b');
-				track('a');
+				const track = (name: string) => (instance as unknown as { _trackFacet(name: string): Promise<void> })._trackFacet(name);
+				await track('a');
+				await track('b');
+				await track('a');
 				const rows = JSON.parse(state.storage.kv.get('facets') as string) as Array<{ name: string }>;
 				expect(rows.map((r) => r.name).sort()).toEqual(['a', 'b']);
 			});
