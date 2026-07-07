@@ -156,10 +156,51 @@ changes). Registry + tests + live verify like the other examples.
 - **DO detour**: fine — storage runs go through the StorageHost supervisor DO;
   non-storage runs keep the direct path untouched.
 
-No remaining open user questions — the spikes listed above (facets under
-wrangler dev/vitest, databaseSize inside a facet, alarms+facets coexistence,
-ctx.exports loopbacks from inside a DO, limits semantics for a facet-mounted
-class) are the gating work before building.
+No remaining open user questions.
+
+### Spike results (2026-07-06, all items verified empirically)
+Current docs: developers.cloudflare.com/dynamic-workers/usage/durable-object-facets/
+(the /durable-objects/api/facets/ URL 404s). Supervisor class goes in a
+`new_sqlite_classes` migration; the facet class is NOT declared; compat date
+must be ≥ 2026-04-01 (repo's 2026-06-22 is fine).
+1. **Local support**: facets WORK under `wrangler dev` (wrangler 4.103.0 →
+   workerd 1.20260617.1) but DO NOT EXIST in the vitest workers pool
+   (@cloudflare/vitest-pool-workers 0.12.21 pins wrangler 4.72.0 → workerd
+   1.20260310.1, predating the April 2026 facets launch): `ctx.facets` is
+   undefined there. Facet e2e = wrangler dev/deploy; vitest tests the pure
+   logic + supervisor bookkeeping behind a seam + a guard test pinning the
+   absence.
+2. **databaseSize**: inside a facet, `ctx.storage.sql.databaseSize` reports the
+   facet's OWN DB (grew 4 KiB → ~468 KiB on writes while the supervisor's
+   stayed put). The hard-cap backstop design is sound.
+3. **Alarms+facets coexist**; `ctx.facets.delete()` works from the alarm
+   handler — but only for a facet that was actually started (RPC'd) at least
+   once; deleting a never-invoked facet throws `internal error`. **CAVEAT:**
+   `ctx.storage.deleteAll()` throws `internal error` if the supervisor
+   previously called `ctx.facets.delete()` (repro'd cleanly; may be a local
+   workerd quirk — re-verify on deploy). **Teardown order decided:** delete
+   each tracked facet → `deleteAlarm()` → best-effort `deleteAll()` in
+   try/catch (a throw leaves only the supervisor's few registry rows — tiny,
+   idle, acceptable; deploy-verify whether it still throws there).
+4. **ctx.exports loopbacks work from inside a DO** (constructor requires the
+   options arg — `{ props }` — which loader.ts already always passes). A GATE
+   loopback attached to the loaded worker's env is callable from the
+   facet-mounted class (storage+fetch grants compose), and LogTailer tail
+   delivery works from the facet path under wrangler dev.
+5. **`globalOutbound: null` and `limits` apply to the facet-mounted class**
+   (ambient fetch blocked; cpuMs stays deploy-verified as always).
+
+Trace-composition note for the build (from the trace-view session): the gate's
+module-scoped span/count maps live in the isolate that constructed the
+loopback. In the storage path that's the StorageHost DO's isolate, not
+handleRun's — so StorageHost.run must itself drain `collectGateSpans(runId)` /
+call `releaseGateRun(runId)` and return the drafts in its RPC result for the
+host to fold into the trace.
+
+Spike scaffolding (uncommitted, in the working tree): `src/runtime/storage-spike.ts`
+(working supervisor + facet-harness reference), `test/runtime/facets-spike.spec.ts`
+(pool-absence guard), spike routes/exports in `src/index.ts`, spike DO binding +
+v2 migration in `wrangler.jsonc`. The real implementation replaces all of it.
 
 ## Other open items (carried over, unassigned)
 1. **Deploy verification**: CPU budgets (`cpuMs`) are enforced only in
