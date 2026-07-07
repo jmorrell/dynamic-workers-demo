@@ -3,7 +3,8 @@ import { runInLoader } from './runtime/loader';
 import { transpileUserCode, selectReferencedDeps } from './runtime/transpile';
 import { extractLinkedUrls } from './runtime/extract-urls';
 import { isValidPermissions, validateCustomModules } from './runtime/core';
-import { releaseGateRun } from './runtime/capability-gate';
+import { releaseGateRun, collectGateSpans } from './runtime/capability-gate';
+import { Tracer, type Trace } from './runtime/trace';
 import type { Permissions, RunErrorKind, RunRequestBody, UserWorker } from './runtime/types';
 import { listExamples, getExample, type ExampleModule } from './examples/manifest';
 import { SHARED_DEP_SPECIFIERS } from './examples/registry';
@@ -163,6 +164,23 @@ async function handleRun(request: Request, env: Env, ctx: ExecutionContext): Pro
 		return jsonError(400, 'bad_request', 'worker.type must be "example" or "custom"');
 	}
 
+	// Trace setup: runId doubles as traceId (spec-fixed — every span of an
+	// invocation shares it). Started here, before any of the code-resolution/
+	// fetch work below, so every run-shaped response from this point on — even
+	// an early-exit failure (wasm module load, transpile, target fetch) — can
+	// carry at least a root-only trace.
+	const runId = crypto.randomUUID();
+	const rootStartAbsMs = performance.now();
+	const tracer = new Tracer(runId, rootStartAbsMs);
+	const rootSpanId = tracer.newSpanId();
+	// Finalizes the root span (status reflects the response's overall ok/fail)
+	// and assembles the Trace for a response body. Call exactly once per
+	// early-return or final-return path.
+	function finishTrace(status: 'ok' | 'error'): Trace {
+		tracer.addSpan(rootSpanId, undefined, rootStartAbsMs, performance.now(), status, { name: 'run' });
+		return tracer.build(rootSpanId);
+	}
+
 	// Resolve code from the worker union
 	let code: string;
 	// Saved examples pin their own compat date; custom code falls back to
@@ -207,6 +225,7 @@ async function handleRun(request: Request, env: Env, ctx: ExecutionContext): Pro
 						logsTruncated: false,
 						timingMs: 0,
 						inputTruncated: false,
+						trace: finishTrace('error'),
 					}),
 					{ status: 200, headers: { 'content-type': 'application/json' } },
 				);
@@ -234,6 +253,7 @@ async function handleRun(request: Request, env: Env, ctx: ExecutionContext): Pro
 					logsTruncated: false,
 					timingMs: 0,
 					inputTruncated: false,
+					trace: finishTrace('error'),
 				}),
 				{ status: 200, headers: { 'content-type': 'application/json' } },
 			);
@@ -253,7 +273,20 @@ async function handleRun(request: Request, env: Env, ctx: ExecutionContext): Pro
 	}
 
 	// Fetch target URL
+	const targetFetchSpanId = tracer.newSpanId();
+	const targetFetchStartAbsMs = performance.now();
 	const fetchOutcome = await fetchTarget(url);
+	const targetFetchEndAbsMs = performance.now();
+	tracer.addSpan(
+		targetFetchSpanId,
+		rootSpanId,
+		targetFetchStartAbsMs,
+		targetFetchEndAbsMs,
+		fetchOutcome.type === 'success' ? 'ok' : 'error',
+		fetchOutcome.type === 'success'
+			? { name: 'target_fetch', url, httpStatus: fetchOutcome.input.status, bytes: fetchOutcome.input.body.length, truncated: fetchOutcome.input.truncated }
+			: { name: 'target_fetch', url, errorKind: fetchOutcome.error.kind, error: fetchOutcome.error.message },
+	);
 
 	if (fetchOutcome.type !== 'success') {
 		// Fetch failed - return error without invoking loader
@@ -265,13 +298,11 @@ async function handleRun(request: Request, env: Env, ctx: ExecutionContext): Pro
 				logsTruncated: false,
 				timingMs: 0,
 				inputTruncated: false,
+				trace: finishTrace('error'),
 			}),
 			{ status: 200, headers: { 'content-type': 'application/json' } },
 		);
 	}
-
-	// Generate unique run ID for this execution
-	const runId = crypto.randomUUID();
 
 	// With fetch permission, the allowlist is exactly the URLs referenced by the
 	// fetched page — the gate rejects anything else (no arbitrary spidering).
@@ -285,6 +316,7 @@ async function handleRun(request: Request, env: Env, ctx: ExecutionContext): Pro
 			: undefined;
 
 	// Run code in loader
+	const loaderSpanId = tracer.newSpanId();
 	const startTime = performance.now();
 	const result = await runInLoader(env, fetchOutcome.input, code, runId, ctx, {
 		compatDate,
@@ -293,15 +325,32 @@ async function handleRun(request: Request, env: Env, ctx: ExecutionContext): Pro
 		permissions,
 		allowedUrls,
 	});
-	const timingMs = Math.round(performance.now() - startTime);
+	const loaderEndAbsMs = performance.now();
+	const timingMs = Math.round(loaderEndAbsMs - startTime);
+	tracer.addSpan(loaderSpanId, rootSpanId, startTime, loaderEndAbsMs, result.type === 'success' ? 'ok' : 'error', {
+		name: 'loader',
+		...(userWorker.type === 'example' ? { exampleId: userWorker.exampleId } : { custom: true }),
+		...(result.type === 'failure' ? { errorKind: result.error.kind, error: result.error.message } : {}),
+	});
+	// Gate calls (env.fetch/env.fetchFile), including denied attempts, nest
+	// under the loader span — they only ever happen during the loader's
+	// invocation of the transform.
+	tracer.addExternalSpans(collectGateSpans(runId), loaderSpanId);
 
 	// Read logs from LogSession
+	const logsReadSpanId = tracer.newSpanId();
+	const logsReadStartAbsMs = performance.now();
 	const logs = await env.LOG_SESSION.get(env.LOG_SESSION.idFromName(runId)).getLogs(LOG_READ_TIMEOUT_MS);
+	tracer.addSpan(logsReadSpanId, rootSpanId, logsReadStartAbsMs, performance.now(), 'ok', {
+		name: 'logs_read',
+		lineCount: logs.lines.length,
+		truncated: logs.truncated,
+	});
 
 	// Best-effort in-memory hygiene for the gate's module-scoped per-run maps
-	// (fetchCounts, grown allowlist) — see releaseGateRun's doc comment. Runs
-	// regardless of result.type so a transform_threw/loader_failed run still
-	// releases its entries.
+	// (fetchCounts, grown allowlist, gate spans — already drained above) — see
+	// releaseGateRun's doc comment. Runs regardless of result.type so a
+	// transform_threw/loader_failed run still releases its entries.
 	releaseGateRun(runId);
 
 	return new Response(
@@ -312,6 +361,7 @@ async function handleRun(request: Request, env: Env, ctx: ExecutionContext): Pro
 			logs: logs.lines,
 			logsTruncated: logs.truncated,
 			timingMs,
+			trace: finishTrace(result.type === 'success' ? 'ok' : 'error'),
 			inputTruncated: fetchOutcome.input.truncated,
 		}),
 		{ status: 200, headers: { 'content-type': 'application/json' } },

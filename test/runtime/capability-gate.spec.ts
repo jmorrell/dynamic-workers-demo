@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { env, createExecutionContext } from 'cloudflare:test';
 import { runInLoader } from '../../src/runtime/loader';
-import { releaseGateRun } from '../../src/runtime/capability-gate';
+import { releaseGateRun, collectGateSpans } from '../../src/runtime/capability-gate';
 import type { RunInput } from '../../src/runtime/types';
 
 function makeInput(overrides: Partial<RunInput> = {}): RunInput {
@@ -451,8 +451,130 @@ describe('CapabilityGate', () => {
 		});
 	});
 
+	describe('gate spans (collectGateSpans)', () => {
+		it('records an ok span for a successful fetchText call with url/httpStatus/bytes/truncated/depth attrs', async () => {
+			stubGateFetch(() => new Response('hello', { status: 200, headers: { 'content-type': 'text/plain' } }));
+
+			const allowed = 'https://example.com/linked';
+			const runId = crypto.randomUUID();
+			const code = `export default async (env, input) => {
+				await env.fetch('${allowed}');
+				return 'ok';
+			}`;
+
+			const result = await runInLoader(env, makeInput(), code, runId, ctx, {
+				permissions: { fetch: 'page-links' },
+				allowedUrls: [allowed],
+			});
+			expect(result.type).toBe('success');
+
+			const spans = collectGateSpans(runId);
+			expect(spans).toHaveLength(1);
+			expect(spans[0].status).toBe('ok');
+			expect(spans[0].attrs).toMatchObject({
+				name: 'env.fetch',
+				kind: 'gate_fetch_text',
+				url: allowed,
+				httpStatus: 200,
+				truncated: false,
+				depth: 1,
+			});
+			expect(typeof spans[0].attrs.bytes).toBe('number');
+			expect(spans[0].startAbsMs).toBeLessThanOrEqual(spans[0].endAbsMs);
+		});
+
+		it('records an ok span for fetchFile with kind gate_fetch_file', async () => {
+			stubGateFetch(() => new Response(new Uint8Array([1, 2, 3]), { status: 200, headers: { 'content-type': 'application/octet-stream' } }));
+
+			const allowed = 'https://example.com/file.bin';
+			const runId = crypto.randomUUID();
+			const code = `export default async (env, input) => {
+				await env.fetchFile('${allowed}');
+				return 'ok';
+			}`;
+
+			const result = await runInLoader(env, makeInput(), code, runId, ctx, {
+				permissions: { fetch: 'page-links' },
+				allowedUrls: [allowed],
+			});
+			expect(result.type).toBe('success');
+
+			const spans = collectGateSpans(runId);
+			expect(spans).toHaveLength(1);
+			expect(spans[0].status).toBe('ok');
+			expect(spans[0].attrs).toMatchObject({ name: 'env.fetchFile', kind: 'gate_fetch_file', url: allowed, httpStatus: 200, bytes: 3, truncated: false });
+		});
+
+		it('records a denied (error) span, with denied: reason, for a URL not on the allowlist', async () => {
+			stubGateFetch(() => new Response('nope', { status: 200 }));
+
+			const notLinked = 'https://example.com/not-linked';
+			const runId = crypto.randomUUID();
+			const code = `export default async (env, input) => {
+				try {
+					await env.fetch('${notLinked}');
+				} catch (e) {
+					// swallow — we only care about the recorded span here
+				}
+				return 'done';
+			}`;
+
+			const result = await runInLoader(env, makeInput(), code, runId, ctx, {
+				permissions: { fetch: 'page-links' },
+				allowedUrls: ['https://example.com/linked'],
+			});
+			expect(result.type).toBe('success');
+
+			const spans = collectGateSpans(runId);
+			expect(spans).toHaveLength(1);
+			expect(spans[0].status).toBe('error');
+			expect(spans[0].attrs.name).toBe('env.fetch');
+			expect(spans[0].attrs.url).toBe(notLinked);
+			expect(String(spans[0].attrs.denied)).toContain('not reachable within the granted fetch depth');
+			// Denial happens synchronously, before any network I/O — effectively 0ms.
+			expect(spans[0].endAbsMs - spans[0].startAbsMs).toBeLessThan(50);
+		});
+
+		it('scopes spans per runId', async () => {
+			stubGateFetch(() => new Response('ok', { status: 200, headers: { 'content-type': 'text/plain' } }));
+
+			const allowed = 'https://example.com/linked';
+			const runA = crypto.randomUUID();
+			const runB = crypto.randomUUID();
+			const code = `export default async (env, input) => {
+				await env.fetch('${allowed}');
+				return 'ok';
+			}`;
+
+			await runInLoader(env, makeInput(), code, runA, ctx, { permissions: { fetch: 'page-links' }, allowedUrls: [allowed] });
+
+			expect(collectGateSpans(runA)).toHaveLength(1);
+			expect(collectGateSpans(runB)).toHaveLength(0);
+		});
+	});
+
 	describe('releaseGateRun', () => {
 		const pageB = 'https://example.com/release-page-b';
+
+		it('clears the gate-span map too: collectGateSpans is empty for the runId after release', async () => {
+			stubGateFetch(() => new Response('ok', { status: 200, headers: { 'content-type': 'text/plain' } }));
+
+			const runId = crypto.randomUUID();
+			const code = `export default async (env, input) => {
+				await env.fetch('${pageB}');
+				return 'ok';
+			}`;
+			const result = await runInLoader(env, makeInput(), code, runId, ctx, {
+				permissions: { fetch: 'page-links' },
+				allowedUrls: [pageB],
+			});
+			expect(result.type).toBe('success');
+			expect(collectGateSpans(runId)).toHaveLength(1);
+
+			releaseGateRun(runId);
+
+			expect(collectGateSpans(runId)).toHaveLength(0);
+		});
 
 		it('clears both the fetch-count and grown-allowlist maps for a runId', async () => {
 			stubGateFetch(() => new Response('ok', { status: 200, headers: { 'content-type': 'text/plain' } }));

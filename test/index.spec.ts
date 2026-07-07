@@ -1308,6 +1308,198 @@ export default async (env, input) => {
 		});
 	});
 
+	describe('trace (per-invocation span waterfall)', () => {
+		type TraceSpan = {
+			traceId: string;
+			spanId: string;
+			parentSpanId?: string;
+			startMs: number;
+			durMs: number;
+			status: 'ok' | 'error';
+			attrs: Record<string, string | number | boolean>;
+		};
+		type TraceBody = {
+			ok: boolean;
+			trace?: { traceId: string; totalMs: number; spans: TraceSpan[] };
+		};
+
+		afterEach(() => {
+			vi.unstubAllGlobals();
+		});
+
+		it('a page-links run carries a full trace: root + target_fetch + loader + logs_read + gate spans (incl. a denied error span), correctly parented and monotonic', async () => {
+			const linked = 'https://example.com/traced-linked';
+			const notLinked = 'https://example.com/traced-not-linked';
+			vi.stubGlobal(
+				'fetch',
+				vi.fn((input: RequestInfo | URL) => {
+					const u = typeof input === 'string' ? input : input.toString();
+					if (u === linked) {
+						return Promise.resolve(new Response('LINKED', { status: 200, headers: { 'content-type': 'text/plain' } }));
+					}
+					return Promise.resolve(
+						new Response(`<html><body><a href="${linked}">doc</a></body></html>`, {
+							status: 200,
+							headers: { 'content-type': 'text/html' },
+						}),
+					);
+				}),
+			);
+
+			const customCode = `export default async (env, input) => {
+				const res = await env.fetch('${linked}');
+				try {
+					await env.fetch('${notLinked}');
+				} catch (e) {
+					// denied — expected; the trace should still record it as an error span
+				}
+				return res.status;
+			}`;
+
+			const request = new IncomingRequest('http://example.com/api/run', {
+				method: 'POST',
+				headers: { 'CF-Connecting-IP': '203.0.113.250' },
+				body: JSON.stringify({
+					worker: { type: 'custom', customCode },
+					url: 'http://example.com/page',
+					permissions: { fetch: 'page-links' },
+				}),
+			});
+			const ctx = createExecutionContext();
+			const response = await worker.fetch(request, env, ctx);
+			await waitOnExecutionContext(ctx);
+
+			expect(response.status).toBe(200);
+			const data = await response.json<TraceBody>();
+			expect(data.ok).toBe(true);
+			expect(data.trace).toBeDefined();
+			const trace = data.trace!;
+			const spans = trace.spans;
+
+			// Every span shares the run's traceId, and spanIds are unique.
+			expect(spans.every((s) => s.traceId === trace.traceId)).toBe(true);
+			expect(new Set(spans.map((s) => s.spanId)).size).toBe(spans.length);
+
+			const byName = (name: string) => spans.filter((s) => s.attrs.name === name);
+			const root = byName('run')[0];
+			const targetFetch = byName('target_fetch')[0];
+			const loader = byName('loader')[0];
+			const logsRead = byName('logs_read')[0];
+			expect(root).toBeDefined();
+			expect(targetFetch).toBeDefined();
+			expect(loader).toBeDefined();
+			expect(logsRead).toBeDefined();
+
+			// Parenting: root has no parent; host phases parent to root; gate spans
+			// parent to the loader span.
+			expect(root.parentSpanId).toBeUndefined();
+			expect(targetFetch.parentSpanId).toBe(root.spanId);
+			expect(loader.parentSpanId).toBe(root.spanId);
+			expect(logsRead.parentSpanId).toBe(root.spanId);
+
+			const gateSpans = spans.filter((s) => s.parentSpanId === loader.spanId);
+			expect(gateSpans).toHaveLength(2);
+			const okGate = gateSpans.find((s) => s.status === 'ok');
+			const deniedGate = gateSpans.find((s) => s.status === 'error');
+			expect(okGate?.attrs).toMatchObject({ name: 'env.fetch', kind: 'gate_fetch_text', url: linked, httpStatus: 200 });
+			expect(deniedGate?.attrs.url).toBe(notLinked);
+			expect(String(deniedGate?.attrs.denied)).toContain('not reachable within the granted fetch depth');
+
+			// totalMs is the root span's own duration.
+			expect(trace.totalMs).toBe(root.durMs);
+
+			// Spans arrive sorted by startMs (monotonic non-decreasing), root first.
+			expect(spans[0].spanId).toBe(root.spanId);
+			for (let i = 1; i < spans.length; i++) {
+				expect(spans[i].startMs).toBeGreaterThanOrEqual(spans[i - 1].startMs);
+			}
+			for (const s of spans) {
+				expect(s.startMs).toBeGreaterThanOrEqual(0);
+				expect(s.durMs).toBeGreaterThanOrEqual(0);
+			}
+			expect(targetFetch.status).toBe('ok');
+			expect(targetFetch.attrs.httpStatus).toBe(200);
+		});
+
+		it('a plain no-network run has a trace with the host phases and no gate spans', async () => {
+			stubTargetFetch('<html>hi</html>');
+
+			const request = new IncomingRequest('http://example.com/api/run', {
+				method: 'POST',
+				headers: { 'CF-Connecting-IP': '203.0.113.251' },
+				body: JSON.stringify({
+					worker: { type: 'custom', customCode: 'export default (env, input) => input.status' },
+					url: 'http://example.com/page',
+				}),
+			});
+			const ctx = createExecutionContext();
+			const response = await worker.fetch(request, env, ctx);
+			await waitOnExecutionContext(ctx);
+
+			expect(response.status).toBe(200);
+			const data = await response.json<TraceBody>();
+			expect(data.ok).toBe(true);
+			expect(data.trace).toBeDefined();
+			const spans = data.trace!.spans;
+
+			const names = spans.map((s) => s.attrs.name).sort();
+			expect(names).toEqual(['loader', 'logs_read', 'run', 'target_fetch']);
+			const loader = spans.find((s) => s.attrs.name === 'loader')!;
+			expect(spans.filter((s) => s.parentSpanId === loader.spanId)).toHaveLength(0);
+		});
+
+		it('a transpile failure still carries a trace (root-only)', async () => {
+			stubTargetFetch('<html>hi</html>');
+
+			const request = new IncomingRequest('http://example.com/api/run', {
+				method: 'POST',
+				headers: { 'CF-Connecting-IP': '203.0.113.252' },
+				body: JSON.stringify({
+					worker: { type: 'custom', customCode: 'export default (env, input) => { const x = ; }' },
+					url: 'http://example.com/page',
+				}),
+			});
+			const ctx = createExecutionContext();
+			const response = await worker.fetch(request, env, ctx);
+			await waitOnExecutionContext(ctx);
+
+			expect(response.status).toBe(200);
+			const data = await response.json<TraceBody & { error?: { kind: string } }>();
+			expect(data.ok).toBe(false);
+			expect(data.error?.kind).toBe('compile_failed');
+			expect(data.trace).toBeDefined();
+			const spans = data.trace!.spans;
+			expect(spans).toHaveLength(1);
+			expect(spans[0].attrs.name).toBe('run');
+			expect(spans[0].status).toBe('error');
+		});
+
+		it('a target-fetch failure carries a trace with root + an error target_fetch span', async () => {
+			const request = new IncomingRequest('http://example.com/api/run', {
+				method: 'POST',
+				headers: { 'CF-Connecting-IP': '203.0.113.253' },
+				body: JSON.stringify({
+					worker: { type: 'custom', customCode: 'export default (env, input) => 1' },
+					url: 'http://invalid-url-that-does-not-exist.test',
+				}),
+			});
+			const ctx = createExecutionContext();
+			const response = await worker.fetch(request, env, ctx);
+			await waitOnExecutionContext(ctx);
+
+			expect(response.status).toBe(200);
+			const data = await response.json<TraceBody & { error?: { kind: string } }>();
+			expect(data.ok).toBe(false);
+			expect(data.error?.kind).toBe('fetch_failed');
+			const spans = data.trace!.spans;
+			expect(spans.map((s) => s.attrs.name).sort()).toEqual(['run', 'target_fetch']);
+			const targetFetch = spans.find((s) => s.attrs.name === 'target_fetch')!;
+			expect(targetFetch.status).toBe('error');
+			expect(targetFetch.attrs.errorKind).toBe('fetch_failed');
+			expect(typeof targetFetch.attrs.error).toBe('string');
+		});
+	});
+
 	describe('fetch failure scenarios', () => {
 		it('returns fetch error when target URL fails', async () => {
 			const transformCode = 'export default (env, input) => input.status';

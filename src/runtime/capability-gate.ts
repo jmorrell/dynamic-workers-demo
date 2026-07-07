@@ -2,6 +2,7 @@ import { WorkerEntrypoint } from 'cloudflare:workers';
 import { clampFetchDepth, clampMaxFetches, DEFAULT_MAX_FETCHES, guardFetchUrl, truncateBody } from './core';
 import { extractLinkedUrls } from './extract-urls';
 import type { FetchFileResult, FetchTextResult } from './types';
+import type { GateSpanDraft } from './trace';
 
 /**
  * Default per-run total cap on gate fetches, when a run doesn't override it via
@@ -49,16 +50,46 @@ const fetchCounts = new Map<string, number>();
 // state). Depth 1 entries live in props.allowedUrls, never here.
 const grownAllowlists = new Map<string, Map<string, number>>();
 
+// Per-run gate-call spans (one draft per env.fetch/env.fetchFile call, including
+// denials), recorded for the host's trace assembly. Same module-scope trade-off
+// as fetchCounts/grownAllowlists above (a fresh WorkerEntrypoint per RPC call
+// means this can't be instance state). The host drains these via
+// collectGateSpans after the run completes and normalizes the absolute
+// performance.now() timestamps to the run's start (the gate has no notion of
+// "run start" — only the host does).
+const gateSpans = new Map<string, GateSpanDraft[]>();
+
+function recordGateSpan(runId: string, draft: GateSpanDraft): void {
+	let spans = gateSpans.get(runId);
+	if (!spans) {
+		spans = [];
+		gateSpans.set(runId, spans);
+	}
+	spans.push(draft);
+}
+
 /**
- * Best-effort in-memory hygiene: clears a run's fetchCounts and grown-allowlist
- * entries. Call after a run finishes reading its logs. The loopback shares module
- * scope across runs in practice (workerd may reuse the isolate), so skipping this
- * would leak entries indefinitely, but correctness never depends on it running —
- * a runId is never reused, so stale entries just sit unused until released.
+ * Drains a run's recorded gate-call span drafts (does NOT clear them — see
+ * releaseGateRun for that). Called by the host after the run completes, before
+ * releaseGateRun's cleanup, so the host can fold these into its Tracer.
+ */
+export function collectGateSpans(runId: string): GateSpanDraft[] {
+	return gateSpans.get(runId) ?? [];
+}
+
+/**
+ * Best-effort in-memory hygiene: clears a run's fetchCounts, grown-allowlist,
+ * and gate-span entries. Call after a run finishes reading its logs (and, for
+ * spans, after the host has drained them via collectGateSpans). The loopback
+ * shares module scope across runs in practice (workerd may reuse the isolate),
+ * so skipping this would leak entries indefinitely, but correctness never
+ * depends on it running — a runId is never reused, so stale entries just sit
+ * unused until released.
  */
 export function releaseGateRun(runId: string): void {
 	fetchCounts.delete(runId);
 	grownAllowlists.delete(runId);
+	gateSpans.delete(runId);
 }
 
 /**
@@ -85,23 +116,50 @@ export class CapabilityGate extends WorkerEntrypoint<Env> {
 		return grownAllowlists.get(runId)?.get(normalized);
 	}
 
-	private authorize(url: string): { url: URL; depth: number } {
+	// callKind identifies which public method is authorizing (fetchText vs
+	// fetchFile) purely so a denial span can carry the right name/kind — the
+	// thrown message text is unchanged either way (transform-visible behavior
+	// must not change).
+	private authorize(url: string, callKind: 'gate_fetch_text' | 'gate_fetch_file'): { url: URL; depth: number } {
+		const { runId } = this.props();
+		const name = callKind === 'gate_fetch_text' ? 'env.fetch' : 'env.fetchFile';
+		const startAbsMs = performance.now();
+
+		// Records a ~0-duration error span for a denial. Not routed through a
+		// shared "deny and throw" helper: a helper typed to return `never` doesn't
+		// narrow the caller's union-typed locals across the call in this codebase's
+		// TS config, so each denial site below still throws directly (unchanged
+		// message — transform-visible behavior must not change).
+		const recordDenial = (reason: string): void => {
+			recordGateSpan(runId, {
+				startAbsMs,
+				endAbsMs: performance.now(),
+				status: 'error',
+				attrs: { name, kind: callKind, url, denied: reason },
+			});
+		};
+
 		const guarded = guardFetchUrl(url);
 		if (!guarded.ok) {
+			recordDenial(guarded.reason);
 			throw new Error(`env.fetch denied: ${guarded.reason}`);
 		}
 
 		const normalized = guarded.url.toString();
 		const depth = this.resolveDepth(normalized);
 		if (depth === undefined) {
-			throw new Error(`env.fetch denied: ${normalized} is not reachable within the granted fetch depth from the fetched page`);
+			const reason = `${normalized} is not reachable within the granted fetch depth from the fetched page`;
+			recordDenial(reason);
+			throw new Error(`env.fetch denied: ${reason}`);
 		}
 
-		const { runId, maxFetches } = this.props();
+		const { maxFetches } = this.props();
 		const grantedMaxFetches = clampMaxFetches(maxFetches);
 		const used = fetchCounts.get(runId) ?? 0;
 		if (used >= grantedMaxFetches) {
-			throw new Error(`env.fetch denied: exceeded the ${grantedMaxFetches}-fetch limit for this run`);
+			const reason = `exceeded the ${grantedMaxFetches}-fetch limit for this run`;
+			recordDenial(reason);
+			throw new Error(`env.fetch denied: ${reason}`);
 		}
 		fetchCounts.set(runId, used + 1);
 
@@ -159,26 +217,66 @@ export class CapabilityGate extends WorkerEntrypoint<Env> {
 	// Grows the allowlist on success (see growAllowlist); fetchFile never does —
 	// binary responses have no text to extract links from.
 	async fetchText(url: string): Promise<FetchTextResult> {
-		const { url: target, depth } = this.authorize(url);
-		const response = await this.doFetch(target);
-		const contentType = response.headers.get('content-type') ?? 'text/plain';
-		const raw = await response.text();
-		const { body, truncated } = truncateBody(raw, GATE_TEXT_MAX_BYTES);
-		if (response.ok) {
-			this.growAllowlist(this.props().runId, target.toString(), depth, body, contentType);
+		const { runId } = this.props();
+		const startAbsMs = performance.now();
+		const { url: target, depth } = this.authorize(url, 'gate_fetch_text');
+		try {
+			const response = await this.doFetch(target);
+			const contentType = response.headers.get('content-type') ?? 'text/plain';
+			const raw = await response.text();
+			const { body, truncated } = truncateBody(raw, GATE_TEXT_MAX_BYTES);
+			if (response.ok) {
+				this.growAllowlist(runId, target.toString(), depth, body, contentType);
+			}
+			recordGateSpan(runId, {
+				startAbsMs,
+				endAbsMs: performance.now(),
+				status: 'ok',
+				attrs: { name: 'env.fetch', kind: 'gate_fetch_text', url, httpStatus: response.status, bytes: body.length, truncated, depth },
+			});
+			return { status: response.status, contentType, body, truncated };
+		} catch (err) {
+			// Rethrown unchanged (timeout/abort etc.) — only the span records the
+			// failure; transform-visible behavior is untouched.
+			const message = err instanceof Error ? err.message : String(err);
+			recordGateSpan(runId, {
+				startAbsMs,
+				endAbsMs: performance.now(),
+				status: 'error',
+				attrs: { name: 'env.fetch', kind: 'gate_fetch_text', url, error: message, depth },
+			});
+			throw err;
 		}
-		return { status: response.status, contentType, body, truncated };
 	}
 
 	// Never grows the allowlist: fetchFile responses are treated as opaque binary
 	// data, and link extraction is text-only.
 	async fetchFile(url: string): Promise<FetchFileResult> {
-		const { url: target } = this.authorize(url);
-		const response = await this.doFetch(target);
-		const contentType = response.headers.get('content-type') ?? 'application/octet-stream';
-		const full = new Uint8Array(await response.arrayBuffer());
-		const truncated = full.byteLength > GATE_FILE_MAX_BYTES;
-		const bytes = truncated ? full.slice(0, GATE_FILE_MAX_BYTES) : full;
-		return { status: response.status, contentType, bytes, truncated };
+		const { runId } = this.props();
+		const startAbsMs = performance.now();
+		const { url: target, depth } = this.authorize(url, 'gate_fetch_file');
+		try {
+			const response = await this.doFetch(target);
+			const contentType = response.headers.get('content-type') ?? 'application/octet-stream';
+			const full = new Uint8Array(await response.arrayBuffer());
+			const truncated = full.byteLength > GATE_FILE_MAX_BYTES;
+			const bytes = truncated ? full.slice(0, GATE_FILE_MAX_BYTES) : full;
+			recordGateSpan(runId, {
+				startAbsMs,
+				endAbsMs: performance.now(),
+				status: 'ok',
+				attrs: { name: 'env.fetchFile', kind: 'gate_fetch_file', url, httpStatus: response.status, bytes: bytes.byteLength, truncated, depth },
+			});
+			return { status: response.status, contentType, bytes, truncated };
+		} catch (err) {
+			const message = err instanceof Error ? err.message : String(err);
+			recordGateSpan(runId, {
+				startAbsMs,
+				endAbsMs: performance.now(),
+				status: 'error',
+				attrs: { name: 'env.fetchFile', kind: 'gate_fetch_file', url, error: message, depth },
+			});
+			throw err;
+		}
 	}
 }
