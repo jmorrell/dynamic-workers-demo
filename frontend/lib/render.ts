@@ -101,6 +101,25 @@ export function formatPermissions(permissions: Permissions | undefined): string 
 	return `permissions: ${parts.join(' · ')}`;
 }
 
+// Frontend copy of the wire type from src/runtime/trace.ts — see that file for
+// the authoritative shape/doc comments. attrs values (urls, error messages)
+// are UNTRUSTED and must only ever reach the DOM via textContent/title.
+export type TraceSpan = {
+	readonly traceId: string;
+	readonly spanId: string;
+	readonly parentSpanId?: string;
+	readonly startMs: number;
+	readonly durMs: number;
+	readonly status: 'ok' | 'error';
+	readonly attrs: Readonly<Record<string, string | number | boolean>>;
+};
+
+export type Trace = {
+	readonly traceId: string;
+	readonly totalMs: number;
+	readonly spans: ReadonlyArray<TraceSpan>;
+};
+
 type RunResponseOk = {
 	readonly ok: true;
 	readonly result: unknown;
@@ -108,6 +127,7 @@ type RunResponseOk = {
 	readonly logsTruncated: boolean;
 	readonly timingMs: number;
 	readonly inputTruncated: boolean;
+	readonly trace?: Trace;
 };
 
 type RunResponseError = {
@@ -117,6 +137,7 @@ type RunResponseError = {
 	readonly logsTruncated: boolean;
 	readonly timingMs: number;
 	readonly inputTruncated: boolean;
+	readonly trace?: Trace;
 };
 
 export type RunResponse = RunResponseOk | RunResponseError;
@@ -171,4 +192,100 @@ export function exampleOptions(examples: ReadonlyArray<Example>): Array<ExampleO
 		id: ex.id,
 		title: ex.title,
 	}));
+}
+
+export type TraceRow = {
+	readonly depthLevel: number;
+	readonly label: string;
+	readonly leftPct: number;
+	readonly widthPct: number;
+	readonly tone: 'ok' | 'error' | 'phase';
+	readonly detail: string;
+};
+
+// Minimum visible bar width (percent of the shared time axis) so a ~0ms span
+// (rounds to 0 duration, e.g. a pure-CPU stretch — see trace.ts's caveat) still
+// shows a sliver rather than disappearing.
+const MIN_TRACE_BAR_WIDTH_PCT = 0.5;
+
+function clamp(n: number, min: number, max: number): number {
+	return Math.min(Math.max(n, min), max);
+}
+
+// Depth from parentSpanId chains: root (no parent, or a parent not present in
+// this span set) is depth 0; each hop up adds 1. Guards cycles defensively
+// (shouldn't occur in well-formed traces) by treating an already-visited span
+// in the current walk as depth 0.
+function computeDepths(spans: ReadonlyArray<TraceSpan>): Map<string, number> {
+	const bySpanId = new Map(spans.map((s) => [s.spanId, s]));
+	const depths = new Map<string, number>();
+
+	function depthOf(spanId: string, seen: Set<string>): number {
+		const cached = depths.get(spanId);
+		if (cached !== undefined) return cached;
+
+		const span = bySpanId.get(spanId);
+		if (!span || !span.parentSpanId || !bySpanId.has(span.parentSpanId) || seen.has(spanId)) {
+			depths.set(spanId, 0);
+			return 0;
+		}
+
+		seen.add(spanId);
+		const d = depthOf(span.parentSpanId, seen) + 1;
+		depths.set(spanId, d);
+		return d;
+	}
+
+	for (const s of spans) depthOf(s.spanId, new Set());
+	return depths;
+}
+
+// Short pathname-ish tail of a URL for a gate span's label (the full URL goes
+// in `detail` instead, so the row stays scannable). Falls back to the raw
+// string if it doesn't parse as a URL.
+function urlTail(rawUrl: string): string {
+	try {
+		const u = new URL(rawUrl);
+		const segments = u.pathname.split('/').filter(Boolean);
+		return segments.length > 0 ? segments[segments.length - 1] : u.hostname;
+	} catch {
+		return rawUrl;
+	}
+}
+
+// Builds the waterfall rows for the trace UI: nesting depth from the
+// parentSpanId chain, left/width as percentages of the shared time axis
+// (totalMs <= 0 is treated as 1 to avoid division by zero), a short label, a
+// tone for bar coloring, and a hover detail dump. Spans are returned in the
+// given (startMs-sorted) order — row order is not otherwise touched.
+export function buildTraceLayout(spans: ReadonlyArray<TraceSpan>, totalMs: number): Array<TraceRow> {
+	const denom = totalMs > 0 ? totalMs : 1;
+	const depths = computeDepths(spans);
+
+	return spans.map((span): TraceRow => {
+		const leftPct = clamp((span.startMs / denom) * 100, 0, 100);
+		const maxWidthPct = 100 - leftPct;
+		const rawWidthPct = clamp((span.durMs / denom) * 100, 0, maxWidthPct);
+		const widthPct = Math.min(Math.max(rawWidthPct, Math.min(MIN_TRACE_BAR_WIDTH_PCT, maxWidthPct)), maxWidthPct);
+
+		const kind = typeof span.attrs.kind === 'string' ? span.attrs.kind : '';
+		const tone: TraceRow['tone'] = span.status === 'error' ? 'error' : kind.startsWith('gate_') ? 'ok' : 'phase';
+
+		const name = typeof span.attrs.name === 'string' ? span.attrs.name : String(span.attrs.name ?? span.spanId);
+		const label = typeof span.attrs.url === 'string' ? `${name} ${urlTail(span.attrs.url)}` : name;
+
+		const detail = [
+			...Object.entries(span.attrs).map(([k, v]) => `${k}: ${v}`),
+			`${span.durMs}ms at +${span.startMs}ms`,
+		].join('\n');
+
+		return {
+			depthLevel: depths.get(span.spanId) ?? 0,
+			label,
+			leftPct,
+			widthPct,
+			tone,
+			detail,
+		};
+	});
 }

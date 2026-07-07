@@ -8,10 +8,12 @@ import {
 	isTabSetDirty,
 	buildCustomRunPayload,
 	bytesToBase64,
+	buildTraceLayout,
 	type RunResponse,
 	type Example,
 	type EditorTab,
 	type CustomRunModule,
+	type Trace,
 } from './lib/render';
 import { EditorView, basicSetup } from 'codemirror';
 import { keymap } from '@codemirror/view';
@@ -70,6 +72,7 @@ const resultsTitleEl = document.getElementById('results-title') as HTMLDivElemen
 const resultsBodyEl = document.getElementById('results-body') as HTMLDivElement;
 const logsContainerEl = document.getElementById('logs-container') as HTMLDivElement;
 const timingInfoEl = document.getElementById('timing-info') as HTMLDivElement;
+const traceContainerEl = document.getElementById('trace-container') as HTMLDivElement;
 const suggestedUrlsSection = document.getElementById('suggested-urls-section') as HTMLDivElement;
 const suggestedUrlsEl = document.getElementById('suggested-urls') as HTMLDivElement;
 const turnstileDiv = document.getElementById('turnstile') as HTMLDivElement;
@@ -380,6 +383,7 @@ function clearResults(): void {
 	resultsBodyEl.innerHTML = '';
 	logsContainerEl.innerHTML = '';
 	timingInfoEl.innerHTML = '';
+	traceContainerEl.innerHTML = '';
 }
 
 // Restores every tab (not just the active one) to its pristine content.
@@ -449,6 +453,7 @@ async function onRunClick(): Promise<void> {
 				resultsBodyEl.textContent = `Failed to load example modules: ${String(error)}`;
 				logsContainerEl.innerHTML = '';
 				timingInfoEl.innerHTML = '';
+				traceContainerEl.innerHTML = '';
 				resultsSection.classList.remove('empty');
 				state.isRunning = false;
 				updateRunButton();
@@ -487,6 +492,7 @@ async function onRunClick(): Promise<void> {
 			resultsBodyEl.textContent = `HTTP ${response.status}: ${response.statusText}`;
 			logsContainerEl.innerHTML = '';
 			timingInfoEl.innerHTML = '';
+			traceContainerEl.innerHTML = '';
 			resultsSection.classList.remove('empty');
 			state.isRunning = false;
 			updateRunButton();
@@ -506,6 +512,7 @@ async function onRunClick(): Promise<void> {
 		resultsBodyEl.textContent = `Network error: ${String(error)}`;
 		logsContainerEl.innerHTML = '';
 		timingInfoEl.innerHTML = '';
+		traceContainerEl.innerHTML = '';
 		resultsSection.classList.remove('empty');
 	}
 
@@ -564,5 +571,55 @@ function renderResults(data: RunResponse): void {
 		timingInfoEl.appendChild(timing);
 	}
 
+	renderTrace(data.trace);
+
 	resultsSection.classList.remove('empty');
+}
+
+// Renders the collapsible waterfall trace section, or nothing when the
+// response has no trace/spans (e.g. an older-shaped response). Closed by
+// default. All text goes through textContent/title — attrs (urls, error
+// messages) are untrusted, same discipline as the rest of renderResults.
+function renderTrace(trace: Trace | undefined): void {
+	traceContainerEl.innerHTML = '';
+	if (!trace || trace.spans.length === 0) return;
+
+	const rows = buildTraceLayout(trace.spans, trace.totalMs);
+
+	const details = document.createElement('details');
+	details.className = 'trace-details';
+
+	const summary = document.createElement('summary');
+	summary.textContent = `Trace (${trace.spans.length} spans, ${trace.totalMs}ms)`;
+	details.appendChild(summary);
+
+	const rowsContainer = document.createElement('div');
+	rowsContainer.className = 'trace-rows';
+
+	for (const row of rows) {
+		const rowEl = document.createElement('div');
+		rowEl.className = 'trace-row';
+		rowEl.title = row.detail;
+
+		const labelEl = document.createElement('span');
+		labelEl.className = 'trace-label';
+		labelEl.style.paddingLeft = `${row.depthLevel * 12}px`;
+		labelEl.textContent = row.label;
+		rowEl.appendChild(labelEl);
+
+		const trackEl = document.createElement('div');
+		trackEl.className = 'trace-track';
+
+		const barEl = document.createElement('div');
+		barEl.className = `trace-bar trace-bar-${row.tone}`;
+		barEl.style.left = `${row.leftPct}%`;
+		barEl.style.width = `${row.widthPct}%`;
+		trackEl.appendChild(barEl);
+
+		rowEl.appendChild(trackEl);
+		rowsContainer.appendChild(rowEl);
+	}
+
+	details.appendChild(rowsContainer);
+	traceContainerEl.appendChild(details);
 }

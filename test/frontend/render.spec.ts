@@ -9,7 +9,9 @@ import {
 	isTabSetDirty,
 	buildCustomRunPayload,
 	bytesToBase64,
+	buildTraceLayout,
 	type Example,
+	type TraceSpan,
 } from '../../frontend/lib/render';
 
 describe('render helpers', () => {
@@ -353,6 +355,114 @@ describe('render helpers', () => {
 			expect(formatPermissions({ fetch: 'page-links', fetchDepth: 2, maxFetches: 6, cpuMs: 500 })).toBe(
 				'permissions: fetch page-links · depth 2 · fetches 6 · cpu 500ms',
 			);
+		});
+	});
+
+	describe('buildTraceLayout', () => {
+		function span(overrides: Partial<TraceSpan> & Pick<TraceSpan, 'spanId'>): TraceSpan {
+			return {
+				traceId: 't1',
+				parentSpanId: undefined,
+				startMs: 0,
+				durMs: 0,
+				status: 'ok',
+				attrs: {},
+				...overrides,
+			};
+		}
+
+		it('computes nesting depth from the parentSpanId chain', () => {
+			const spans: Array<TraceSpan> = [
+				span({ spanId: 's1', attrs: { name: 'run' } }),
+				span({ spanId: 's2', parentSpanId: 's1', attrs: { name: 'loader' } }),
+				span({ spanId: 's3', parentSpanId: 's2', attrs: { name: 'env.fetch', kind: 'gate_fetch' } }),
+			];
+			const rows = buildTraceLayout(spans, 100);
+			expect(rows.map((r) => r.depthLevel)).toEqual([0, 1, 2]);
+		});
+
+		it('treats a missing/unresolvable parent as root (depth 0)', () => {
+			const spans: Array<TraceSpan> = [span({ spanId: 's1', parentSpanId: 'ghost', attrs: { name: 'orphan' } })];
+			const rows = buildTraceLayout(spans, 100);
+			expect(rows[0].depthLevel).toBe(0);
+		});
+
+		it('converts startMs/durMs to percentages of totalMs', () => {
+			const spans: Array<TraceSpan> = [span({ spanId: 's1', startMs: 25, durMs: 50, attrs: { name: 'target_fetch' } })];
+			const rows = buildTraceLayout(spans, 100);
+			expect(rows[0].leftPct).toBe(25);
+			expect(rows[0].widthPct).toBe(50);
+		});
+
+		it('clamps a span that overruns totalMs so left + width never exceeds 100', () => {
+			const spans: Array<TraceSpan> = [span({ spanId: 's1', startMs: 90, durMs: 40, attrs: { name: 'loader' } })];
+			const rows = buildTraceLayout(spans, 100);
+			expect(rows[0].leftPct).toBe(90);
+			expect(rows[0].leftPct + rows[0].widthPct).toBeLessThanOrEqual(100);
+		});
+
+		it('enforces a minimum visible width for a ~0ms span', () => {
+			const spans: Array<TraceSpan> = [span({ spanId: 's1', startMs: 10, durMs: 0, attrs: { name: 'logs_read' } })];
+			const rows = buildTraceLayout(spans, 1000);
+			expect(rows[0].widthPct).toBeGreaterThan(0);
+		});
+
+		it('guards totalMs <= 0 by treating it as 1 rather than dividing by zero', () => {
+			const spans: Array<TraceSpan> = [span({ spanId: 's1', startMs: 0, durMs: 0, attrs: { name: 'run' } })];
+			const rows = buildTraceLayout(spans, 0);
+			expect(Number.isFinite(rows[0].leftPct)).toBe(true);
+			expect(Number.isFinite(rows[0].widthPct)).toBe(true);
+		});
+
+		it('tones a denied gate span as error even though its kind starts with gate_', () => {
+			const spans: Array<TraceSpan> = [
+				span({ spanId: 's1', status: 'error', attrs: { name: 'env.fetch', kind: 'gate_fetch', denied: 'not_allowlisted' } }),
+			];
+			const rows = buildTraceLayout(spans, 100);
+			expect(rows[0].tone).toBe('error');
+		});
+
+		it('tones a successful gate span as ok', () => {
+			const spans: Array<TraceSpan> = [span({ spanId: 's1', status: 'ok', attrs: { name: 'env.fetch', kind: 'gate_fetch' } })];
+			const rows = buildTraceLayout(spans, 100);
+			expect(rows[0].tone).toBe('ok');
+		});
+
+		it('tones a host phase/root span as phase', () => {
+			const spans: Array<TraceSpan> = [span({ spanId: 's1', status: 'ok', attrs: { name: 'run' } })];
+			const rows = buildTraceLayout(spans, 100);
+			expect(rows[0].tone).toBe('phase');
+		});
+
+		it('labels a gate span with the name plus the url tail, keeping the full url in detail', () => {
+			const spans: Array<TraceSpan> = [
+				span({ spanId: 's1', attrs: { name: 'env.fetch', kind: 'gate_fetch', url: 'https://example.com/articles/foo' } }),
+			];
+			const rows = buildTraceLayout(spans, 100);
+			expect(rows[0].label).toBe('env.fetch foo');
+			expect(rows[0].detail).toContain('https://example.com/articles/foo');
+		});
+
+		it('falls back to spanId for the label when attrs.name is absent', () => {
+			const spans: Array<TraceSpan> = [span({ spanId: 's7', attrs: {} })];
+			const rows = buildTraceLayout(spans, 100);
+			expect(rows[0].label).toBe('s7');
+		});
+
+		it('includes a human-readable timing line in detail', () => {
+			const spans: Array<TraceSpan> = [span({ spanId: 's1', startMs: 3, durMs: 12, attrs: { name: 'target_fetch' } })];
+			const rows = buildTraceLayout(spans, 100);
+			expect(rows[0].detail).toContain('12ms at +3ms');
+		});
+
+		it('preserves row order matching the given span order', () => {
+			const spans: Array<TraceSpan> = [
+				span({ spanId: 's1', attrs: { name: 'run' } }),
+				span({ spanId: 's2', parentSpanId: 's1', attrs: { name: 'target_fetch' } }),
+				span({ spanId: 's3', parentSpanId: 's1', attrs: { name: 'loader' } }),
+			];
+			const rows = buildTraceLayout(spans, 100);
+			expect(rows.map((r) => r.label)).toEqual(['run', 'target_fetch', 'loader']);
 		});
 	});
 });

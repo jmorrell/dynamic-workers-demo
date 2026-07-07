@@ -239,6 +239,67 @@
 				color: #060;
 				font-weight: 600;
 			}
+
+			#trace-container {
+				margin-top: 8px;
+			}
+
+			.trace-details summary {
+				cursor: pointer;
+				font-size: 12px;
+				font-weight: 600;
+				color: #555;
+			}
+
+			.trace-rows {
+				margin-top: 6px;
+				font-family: 'Monaco', 'Menlo', 'Consolas', monospace;
+			}
+
+			.trace-row {
+				display: flex;
+				align-items: center;
+				gap: 8px;
+				height: 18px;
+				line-height: 18px;
+			}
+
+			.trace-label {
+				flex: 0 0 auto;
+				max-width: 40%;
+				overflow: hidden;
+				text-overflow: ellipsis;
+				white-space: nowrap;
+				font-size: 11px;
+				color: #444;
+			}
+
+			.trace-track {
+				position: relative;
+				flex: 1 1 auto;
+				height: 10px;
+				background: #eee;
+				border-radius: 2px;
+			}
+
+			.trace-bar {
+				position: absolute;
+				top: 0;
+				height: 100%;
+				border-radius: 2px;
+			}
+
+			.trace-bar-ok {
+				background: #2f7de1;
+			}
+
+			.trace-bar-error {
+				background: #c00;
+			}
+
+			.trace-bar-phase {
+				background: #999;
+			}
 		</style>
 	</head>
 	<body>
@@ -285,6 +346,7 @@
 			<div id="results-body"></div>
 			<div id="logs-container"></div>
 			<div id="timing-info"></div>
+			<div id="trace-container"></div>
 		</section>
 
 		<script src="https://challenges.cloudflare.com/turnstile/v0/api.js" async defer></script>
