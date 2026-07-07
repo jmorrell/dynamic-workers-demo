@@ -1,7 +1,8 @@
 import { describe, it, expect } from 'vitest';
-import type { RunInput } from '../../src/runtime/types';
+import type { RunInput, StorageApi, TransformEnv } from '../../src/runtime/types';
 import opengraph from '../../src/examples/opengraph';
 import hackernews from '../../src/examples/hackernews';
+import feedWatcher, { extractFeedTitle, extractItems, hashIdentity, computeDelta, type FeedItem } from '../../src/examples/feed-watcher';
 
 // The parsing logic lives inline inside each example's transform(). These tests
 // drive the examples through their default export, feeding `body` via RunInput.
@@ -145,5 +146,199 @@ describe('hackernews example', () => {
 		expect(result).toHaveLength(2);
 		expect(result[0].author).toBe('user1');
 		expect(result[1].author).toBe('user3');
+	});
+});
+
+describe('feed-watcher example', () => {
+	const RSS_FEED = `<?xml version="1.0"?>
+		<rss><channel>
+			<title>Example Feed</title>
+			<item>
+				<title>First Post</title>
+				<link>https://example.com/first</link>
+				<guid>guid-1</guid>
+			</item>
+			<item>
+				<title>Second Post</title>
+				<link>https://example.com/second</link>
+				<guid>guid-2</guid>
+			</item>
+		</channel></rss>`;
+
+	const ATOM_FEED = `<?xml version="1.0"?>
+		<feed>
+			<title>Atom Feed</title>
+			<entry>
+				<title>Atom Entry</title>
+				<id>urn:uuid:atom-1</id>
+				<link href="https://example.com/atom-1" rel="alternate"/>
+			</entry>
+		</feed>`;
+
+	describe('extractFeedTitle / extractItems (RSS + Atom parsing)', () => {
+		it('extracts the feed title and item title/link/guid for RSS', () => {
+			expect(extractFeedTitle(RSS_FEED)).toBe('Example Feed');
+			const items = extractItems(RSS_FEED);
+			expect(items).toHaveLength(2);
+			expect(items[0]).toEqual({ title: 'First Post', link: 'https://example.com/first', guid: 'guid-1' });
+			expect(items[1]).toEqual({ title: 'Second Post', link: 'https://example.com/second', guid: 'guid-2' });
+		});
+
+		it('extracts items for Atom feeds, using <id> as the guid', () => {
+			const items = extractItems(ATOM_FEED);
+			expect(items).toHaveLength(1);
+			expect(items[0]).toEqual({ title: 'Atom Entry', link: 'https://example.com/atom-1', guid: 'urn:uuid:atom-1' });
+		});
+
+		it('caps parsed items at MAX_ITEMS_PER_RUN worth of blocks', () => {
+			const manyItems = Array.from(
+				{ length: 150 },
+				(_, i) => `<item><title>Item ${i}</title><link>https://example.com/${i}</link><guid>g${i}</guid></item>`,
+			).join('\n');
+			const feed = `<rss><channel><title>Big Feed</title>${manyItems}</channel></rss>`;
+			expect(extractItems(feed).length).toBeLessThanOrEqual(100);
+		});
+	});
+
+	describe('hashIdentity', () => {
+		it('is deterministic', () => {
+			expect(hashIdentity('https://example.com/a')).toBe(hashIdentity('https://example.com/a'));
+		});
+
+		it('differs for different identities (no trivial collision)', () => {
+			expect(hashIdentity('https://example.com/a')).not.toBe(hashIdentity('https://example.com/b'));
+		});
+
+		it('produces an 8-hex-char digest', () => {
+			expect(hashIdentity('anything')).toMatch(/^[0-9a-f]{8}$/);
+		});
+	});
+
+	describe('computeDelta (pure core)', () => {
+		const items: FeedItem[] = [
+			{ title: 'A', link: 'https://example.com/a', guid: 'a' },
+			{ title: 'B', link: 'https://example.com/b', guid: 'b' },
+		];
+
+		it('reports firstRun true and all items new when nothing was stored yet', () => {
+			const delta = computeDelta(items, []);
+			expect(delta.firstRun).toBe(true);
+			expect(delta.newItems).toHaveLength(2);
+			expect(delta.updatedSeen).toHaveLength(2);
+		});
+
+		it('reports firstRun false and zero new items when everything was already seen', () => {
+			const seeded = computeDelta(items, []).updatedSeen;
+			const delta = computeDelta(items, seeded);
+			expect(delta.firstRun).toBe(false);
+			expect(delta.newItems).toHaveLength(0);
+			expect(delta.updatedSeen).toEqual(seeded);
+		});
+
+		it('reports only the genuinely new items on a partial overlap', () => {
+			const seeded = computeDelta([items[0]], []).updatedSeen;
+			const delta = computeDelta(items, seeded);
+			expect(delta.firstRun).toBe(false);
+			expect(delta.newItems).toHaveLength(1);
+			expect(delta.newItems[0].link).toBe('https://example.com/b');
+			expect(delta.updatedSeen).toHaveLength(2);
+		});
+
+		it('skips items without a link', () => {
+			const delta = computeDelta([{ title: 'no link', link: null, guid: 'x' }], []);
+			expect(delta.newItems).toHaveLength(0);
+			expect(delta.updatedSeen).toHaveLength(0);
+		});
+
+		it('dedupes identical identities appearing twice in the same run', () => {
+			const dup: FeedItem[] = [
+				{ title: 'A', link: 'https://example.com/a', guid: 'a' },
+				{ title: 'A again', link: 'https://example.com/a', guid: 'a' },
+			];
+			const delta = computeDelta(dup, []);
+			expect(delta.newItems).toHaveLength(1);
+			expect(delta.updatedSeen).toHaveLength(1);
+		});
+
+		it('caps the stored seen list at the most recent 500 ids', () => {
+			const manyHashes = Array.from({ length: 500 }, (_, i) => hashIdentity(`old-${i}`));
+			const delta = computeDelta(items, manyHashes);
+			expect(delta.updatedSeen.length).toBe(500);
+			// The two newly-added hashes survive; the oldest two fall off.
+			expect(delta.updatedSeen).toContain(hashIdentity('a'));
+			expect(delta.updatedSeen).toContain(hashIdentity('b'));
+			expect(delta.updatedSeen).not.toContain(hashIdentity('old-0'));
+			expect(delta.updatedSeen).not.toContain(hashIdentity('old-1'));
+		});
+	});
+
+	// A minimal in-memory env.storage stand-in (the real one is backed by a DO
+	// facet's SQLite kv — see src/runtime/harness-source.ts — but its get/put
+	// shape is exactly this). Facets don't exist in the vitest pool (see
+	// src/runtime/AGENTS.md gotchas), so the default transform is exercised
+	// directly here (as opengraph/hackernews are above), simulating
+	// persistence across "runs" by reusing the same fake store.
+	function fakeStorage(): StorageApi {
+		const kv = new Map<string, unknown>();
+		return {
+			get: (key) => kv.get(key),
+			put: (key, value) => {
+				kv.set(key, value);
+			},
+			delete: (key) => kv.delete(key),
+			list: () => [...kv.keys()],
+		};
+	}
+
+	it('default transform: first run reports firstRun:true with every item as new', async () => {
+		const env: TransformEnv = { storage: fakeStorage() };
+		const result = (await feedWatcher(env, runInput(RSS_FEED))) as {
+			feedTitle: string | null;
+			firstRun: boolean;
+			newCount: number;
+			seenTotal: number;
+			items: unknown[];
+		};
+
+		expect(result.feedTitle).toBe('Example Feed');
+		expect(result.firstRun).toBe(true);
+		expect(result.newCount).toBe(2);
+		expect(result.seenTotal).toBe(2);
+		expect(result.items).toHaveLength(2);
+	});
+
+	it('default transform: second run against the same feed reports no new items', async () => {
+		const env: TransformEnv = { storage: fakeStorage() };
+		await feedWatcher(env, runInput(RSS_FEED));
+		const second = (await feedWatcher(env, runInput(RSS_FEED))) as { firstRun: boolean; newCount: number; seenTotal: number };
+
+		expect(second.firstRun).toBe(false);
+		expect(second.newCount).toBe(0);
+		expect(second.seenTotal).toBe(2);
+	});
+
+	it('default transform: a third run with one added item reports only that item as new', async () => {
+		const env: TransformEnv = { storage: fakeStorage() };
+		await feedWatcher(env, runInput(RSS_FEED));
+
+		const grownFeed = RSS_FEED.replace(
+			'</channel></rss>',
+			'<item><title>Third Post</title><link>https://example.com/third</link><guid>guid-3</guid></item></channel></rss>',
+		);
+		const third = (await feedWatcher(env, runInput(grownFeed))) as {
+			firstRun: boolean;
+			newCount: number;
+			seenTotal: number;
+			items: Array<{ link: string }>;
+		};
+
+		expect(third.firstRun).toBe(false);
+		expect(third.newCount).toBe(1);
+		expect(third.items[0].link).toBe('https://example.com/third');
+		expect(third.seenTotal).toBe(3);
+	});
+
+	it('throws when env.storage is unavailable (no storage grant)', async () => {
+		await expect(feedWatcher({}, runInput(RSS_FEED))).rejects.toThrow('env.storage is unavailable');
 	});
 });

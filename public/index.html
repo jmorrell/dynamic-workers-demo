@@ -105,6 +105,26 @@
 				margin-bottom: 4px;
 			}
 
+			.storage-row {
+				display: flex;
+				align-items: center;
+				gap: 8px;
+				margin-bottom: 4px;
+			}
+
+			#clear-store-button {
+				display: none;
+				padding: 2px 10px;
+				font-size: 12px;
+				font-weight: 400;
+			}
+
+			#clear-store-status {
+				display: none;
+				font-size: 12px;
+				color: #555;
+			}
+
 			#editor-reset {
 				display: none;
 				padding: 2px 10px;
@@ -329,6 +349,10 @@
 				<button type="button" id="editor-reset">Reset</button>
 			</div>
 			<div id="editor-perms"></div>
+			<div class="storage-row">
+				<button type="button" id="clear-store-button">Clear stored data</button>
+				<span id="clear-store-status"></span>
+			</div>
 			<div id="editor-tabs"></div>
 			<div id="editor"></div>
 		</section>

@@ -5,6 +5,7 @@ import {
 	formatRunResponse,
 	exampleOptions,
 	formatPermissions,
+	needsStoreId,
 	exampleTabs,
 	isTabSetDirty,
 	buildCustomRunPayload,
@@ -355,6 +356,38 @@ describe('render helpers', () => {
 			expect(formatPermissions({ fetch: 'page-links', fetchDepth: 2, maxFetches: 6, cpuMs: 500 })).toBe(
 				'permissions: fetch page-links · depth 2 · fetches 6 · cpu 500ms',
 			);
+		});
+
+		it('returns null for a storage: "none" grant alongside no-network', () => {
+			expect(formatPermissions({ fetch: 'none', storage: 'none' })).toBeNull();
+		});
+
+		it('renders a storage-only hint for a storage-scoped, no-network grant', () => {
+			expect(formatPermissions({ fetch: 'none', storage: 'scoped' })).toBe('permissions: storage scoped');
+		});
+
+		it('appends storage scoped after the fetch segments', () => {
+			expect(formatPermissions({ fetch: 'page-links', cpuMs: 500, storage: 'scoped' })).toBe(
+				'permissions: fetch page-links · cpu 500ms · storage scoped',
+			);
+		});
+	});
+
+	describe('needsStoreId', () => {
+		it('is false for undefined permissions', () => {
+			expect(needsStoreId(undefined)).toBe(false);
+		});
+
+		it('is false for a no-storage grant', () => {
+			expect(needsStoreId({ fetch: 'none' })).toBe(false);
+		});
+
+		it('is false for an explicit storage: "none" grant', () => {
+			expect(needsStoreId({ fetch: 'none', storage: 'none' })).toBe(false);
+		});
+
+		it('is true for a storage: "scoped" grant', () => {
+			expect(needsStoreId({ fetch: 'none', storage: 'scoped' })).toBe(true);
 		});
 	});
 

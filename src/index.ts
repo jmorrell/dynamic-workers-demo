@@ -83,6 +83,42 @@ async function loadExampleWasmModules(
 	return { ok: true, modules: wasmModules };
 }
 
+/**
+ * `DELETE /api/store` — the reset UX for the storage capability: destroys the
+ * caller's own store (all its facets) via `StorageHost.selfDestruct()`. No
+ * Turnstile gate (unlike /api/run) since this only ever destroys data scoped
+ * to the storeId the caller itself presents — there's no abuse surface beyond
+ * the same per-IP rate limit /api/run already applies.
+ */
+async function handleStore(request: Request, env: Env): Promise<Response> {
+	if (request.method !== 'DELETE') {
+		return jsonError(405, 'bad_request', 'Method not allowed');
+	}
+
+	let body: unknown;
+	try {
+		body = await request.json();
+	} catch {
+		return jsonError(400, 'bad_request', 'Invalid JSON body');
+	}
+
+	const storeId = typeof body === 'object' && body !== null ? (body as Record<string, unknown>).storeId : undefined;
+	const normalizedStoreId = normalizeStoreId(storeId);
+	if (!normalizedStoreId) {
+		return jsonError(400, 'bad_request', 'storeId (a uuid) is required');
+	}
+
+	const clientIp = request.headers.get('CF-Connecting-IP') ?? 'anonymous';
+	const rateLimitResult = await env.RATE_LIMITER.limit({ key: clientIp });
+	if (!rateLimitResult.success) {
+		return jsonError(429, 'rate_limited', 'Too many requests, please wait and try again.');
+	}
+
+	await env.STORAGE_HOST.get(env.STORAGE_HOST.idFromName(normalizedStoreId)).selfDestruct();
+
+	return new Response(JSON.stringify({ ok: true }), { status: 200, headers: { 'content-type': 'application/json' } });
+}
+
 async function handleRun(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
 	// Validate method
 	if (request.method !== 'POST') {
@@ -470,6 +506,11 @@ export default {
 		// Route POST /api/run
 		if (url.pathname === '/api/run') {
 			return handleRun(request, env, ctx);
+		}
+
+		// Route DELETE /api/store
+		if (url.pathname === '/api/store') {
+			return handleStore(request, env);
 		}
 
 		// Unknown path

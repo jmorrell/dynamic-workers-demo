@@ -46,7 +46,7 @@ describe('GET /api/examples handler', () => {
 
 		const data = await response.json<Array<{ id: string; title: string; description: string }>>();
 		expect(Array.isArray(data)).toBe(true);
-		expect(data.length).toBe(11);
+		expect(data.length).toBe(12);
 
 		// Should not contain code field
 		for (const example of data) {
@@ -1767,5 +1767,83 @@ describe('POST /api/run — storage permission (storeId gate + StorageHost routi
 		expect(data.ok).toBe(true);
 		// env stays {} — no storage capability, no gate.
 		expect(data.result).toEqual([]);
+	});
+});
+
+describe('DELETE /api/store handler', () => {
+	function storeRequest(body: unknown, ip: string, method = 'DELETE') {
+		return new IncomingRequest('http://example.com/api/store', {
+			method,
+			headers: { 'CF-Connecting-IP': ip, 'content-type': 'application/json' },
+			body: body === undefined ? undefined : JSON.stringify(body),
+		});
+	}
+
+	it('returns 405 for a non-DELETE method', async () => {
+		const request = storeRequest({ storeId: crypto.randomUUID() }, '203.0.113.160', 'POST');
+		const ctx = createExecutionContext();
+		const response = await worker.fetch(request, env, ctx);
+		await waitOnExecutionContext(ctx);
+		expect(response.status).toBe(405);
+	});
+
+	it('returns 400 for a missing storeId', async () => {
+		const request = storeRequest({}, '203.0.113.161');
+		const ctx = createExecutionContext();
+		const response = await worker.fetch(request, env, ctx);
+		await waitOnExecutionContext(ctx);
+
+		expect(response.status).toBe(400);
+		const data = await response.json<{ ok: boolean; error: { kind: string } }>();
+		expect(data.ok).toBe(false);
+		expect(data.error.kind).toBe('bad_request');
+	});
+
+	it('returns 400 for a malformed (non-uuid) storeId', async () => {
+		const request = storeRequest({ storeId: 'not-a-uuid' }, '203.0.113.162');
+		const ctx = createExecutionContext();
+		const response = await worker.fetch(request, env, ctx);
+		await waitOnExecutionContext(ctx);
+
+		expect(response.status).toBe(400);
+		const data = await response.json<{ ok: boolean; error: { kind: string } }>();
+		expect(data.error.kind).toBe('bad_request');
+	});
+
+	it('returns 400 for malformed JSON body', async () => {
+		const request = new IncomingRequest('http://example.com/api/store', {
+			method: 'DELETE',
+			headers: { 'CF-Connecting-IP': '203.0.113.163' },
+			body: 'not json',
+		});
+		const ctx = createExecutionContext();
+		const response = await worker.fetch(request, env, ctx);
+		await waitOnExecutionContext(ctx);
+		expect(response.status).toBe(400);
+	});
+
+	it('returns 200 { ok: true } for a valid (fresh, never-used) storeId', async () => {
+		// selfDestruct on a fresh supervisor DO (no facets ever mounted, no
+		// bookkeeping rows) is harmless — it just runs the teardown sequence
+		// against empty state. This asserts that doesn't throw.
+		const request = storeRequest({ storeId: crypto.randomUUID() }, '203.0.113.164');
+		const ctx = createExecutionContext();
+		const response = await worker.fetch(request, env, ctx);
+		await waitOnExecutionContext(ctx);
+
+		expect(response.status).toBe(200);
+		const data = await response.json<{ ok: boolean }>();
+		expect(data.ok).toBe(true);
+	});
+
+	it('normalizes an uppercase storeId (same casing rule as /api/run)', async () => {
+		const request = storeRequest({ storeId: crypto.randomUUID().toUpperCase() }, '203.0.113.165');
+		const ctx = createExecutionContext();
+		const response = await worker.fetch(request, env, ctx);
+		await waitOnExecutionContext(ctx);
+
+		expect(response.status).toBe(200);
+		const data = await response.json<{ ok: boolean }>();
+		expect(data.ok).toBe(true);
 	});
 });

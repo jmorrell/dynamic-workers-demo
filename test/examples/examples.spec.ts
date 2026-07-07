@@ -427,6 +427,21 @@ describe('Example transforms through loader (AC2.1–AC2.5)', () => {
 			expect(example.code.length).toBeGreaterThan(0);
 		});
 
+		// NOTE: feed-watcher is NOT executed through runInLoader/StorageHost here —
+		// its storage: 'scoped' grant routes through the StorageHost supervisor DO,
+		// which mounts a facet; facets don't exist in the vitest workers pool (see
+		// src/runtime/AGENTS.md gotchas). Its parsing/pure logic is covered directly
+		// in test/examples/parse.spec.ts; here we only assert it's registered with
+		// bundled code so the manifest stays complete, same as cpu-spin below.
+		it('feed-watcher example is present in the manifest with bundled code and a storage grant', () => {
+			const example = getExample('feed-watcher');
+			expect(example).toBeDefined();
+			if (!example) return;
+			expect(typeof example.code).toBe('string');
+			expect(example.code.length).toBeGreaterThan(0);
+			expect(example.permissions).toEqual({ fetch: 'none', storage: 'scoped' });
+		});
+
 		it('blocked-fetch example returns a network_blocked error through the loader', async () => {
 			const example = getExample('blocked-fetch');
 			expect(example).toBeDefined();

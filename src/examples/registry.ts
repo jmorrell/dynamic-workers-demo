@@ -131,6 +131,16 @@ export const EXAMPLE_REGISTRY: ReadonlyArray<ExampleMeta> = [
 		],
 	},
 	{
+		id: 'feed-watcher',
+		title: 'Feed Watcher (env.storage)',
+		description:
+			"Parses an RSS or Atom feed's items and remembers which ones it has already seen, so each run reports only what's new since the last one. Stored data is remembered for about an hour, then automatically forgotten.",
+		suggestedUrls: ['https://blog.cloudflare.com/rss/', 'https://hnrss.org/frontpage'],
+		entry: 'src/examples/feed-watcher.ts',
+		compatDate: '2026-06-22',
+		permissions: { fetch: 'none', storage: 'scoped' },
+	},
+	{
 		id: 'arxiv-digest',
 		title: 'arXiv Citations Digest (fetchDepth 2)',
 		description:

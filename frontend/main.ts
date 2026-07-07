@@ -4,6 +4,7 @@ import {
 	formatRunResponse,
 	exampleOptions,
 	formatPermissions,
+	needsStoreId,
 	exampleTabs,
 	isTabSetDirty,
 	buildCustomRunPayload,
@@ -23,6 +24,31 @@ import { indentUnit } from '@codemirror/language';
 import { Compartment, type Extension } from '@codemirror/state';
 
 const PLACEHOLDER_CODE = '// Select an example to start (or edit it — edits run as custom code)';
+
+// Anonymous, client-minted store identity (see src/runtime/AGENTS.md's Storage
+// contract): a uuid persisted in localStorage so a storage-granted example's
+// facet is found again across page loads. Embedded widgets may run without
+// storage access (third-party iframe restrictions, private browsing, etc.),
+// so any localStorage access is guarded — a failure falls back to a
+// per-page-load-only uuid rather than breaking the run.
+const STORE_ID_KEY = 'dwd-store-id';
+const STORE_ID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+function getOrCreateStoreId(): string {
+	try {
+		const existing = localStorage.getItem(STORE_ID_KEY);
+		if (existing && STORE_ID_RE.test(existing)) return existing;
+		const fresh = crypto.randomUUID();
+		localStorage.setItem(STORE_ID_KEY, fresh);
+		return fresh;
+	} catch {
+		// No storage access (or a write failure) — fall back to an id that's
+		// stable for this page load only.
+		return crypto.randomUUID();
+	}
+}
+
+const STORE_ID = getOrCreateStoreId();
 
 // Module-singleton UI state; fields are mutated in place by the event handlers
 // below (intentional for this thin imperative shell).
@@ -66,6 +92,8 @@ const editorTabsEl = document.getElementById('editor-tabs') as HTMLDivElement;
 const editorStatusEl = document.getElementById('editor-status') as HTMLSpanElement;
 const editorPermsEl = document.getElementById('editor-perms') as HTMLDivElement;
 const editorResetButton = document.getElementById('editor-reset') as HTMLButtonElement;
+const clearStoreButton = document.getElementById('clear-store-button') as HTMLButtonElement;
+const clearStoreStatusEl = document.getElementById('clear-store-status') as HTMLSpanElement;
 const runButton = document.getElementById('run-button') as HTMLButtonElement;
 const resultsSection = document.getElementById('results') as HTMLDivElement;
 const resultsTitleEl = document.getElementById('results-title') as HTMLDivElement;
@@ -246,10 +274,43 @@ function selectTab(tabId: string): void {
 
 // Static hint reflecting the selected example's capability grant. A dirty custom
 // run inherits these permissions (see onRunClick), so the line stays accurate.
+// The "clear stored data" affordance rides the same permissions object — a
+// dirty/custom run sends the identical grant back to the server (see
+// onRunClick's `inherited` logic), so whether the button is offered stays in
+// sync with whether the run actually carries a storeId.
 function updatePermissionsHint(): void {
-	const line = formatPermissions(selectedExample()?.permissions);
+	const permissions = selectedExample()?.permissions;
+	const line = formatPermissions(permissions);
 	editorPermsEl.textContent = line ?? '';
 	editorPermsEl.style.display = line ? 'block' : 'none';
+
+	const showClear = needsStoreId(permissions);
+	clearStoreButton.style.display = showClear ? 'inline-block' : 'none';
+	clearStoreStatusEl.textContent = '';
+	clearStoreStatusEl.style.display = 'none';
+}
+
+// Fire-and-confirm: destroys the current storeId's data for whatever example/
+// custom-script identity is selected (the supervisor DO's facets — see
+// StorageHost.selfDestruct). Disabled while in flight; result is shown as an
+// inert textContent status next to the button.
+async function onClearStoreClick(): Promise<void> {
+	clearStoreButton.disabled = true;
+	clearStoreStatusEl.style.display = 'inline';
+	clearStoreStatusEl.textContent = 'Clearing…';
+
+	try {
+		const response = await fetch('/api/store', {
+			method: 'DELETE',
+			headers: { 'Content-Type': 'application/json' },
+			body: JSON.stringify({ storeId: STORE_ID }),
+		});
+		clearStoreStatusEl.textContent = response.ok ? 'Stored data cleared.' : `Failed: HTTP ${response.status}`;
+	} catch (error) {
+		clearStoreStatusEl.textContent = `Failed: ${String(error)}`;
+	} finally {
+		clearStoreButton.disabled = false;
+	}
 }
 
 // Initialize on page load
@@ -339,6 +400,7 @@ function setupEventListeners(): void {
 	editorResetButton.addEventListener('click', onResetClick);
 	runButton.addEventListener('click', onRunClick);
 	urlInput.addEventListener('input', updateRunButton);
+	clearStoreButton.addEventListener('click', onClearStoreClick);
 }
 
 function selectExample(selectedId: string | null): void {
@@ -468,6 +530,14 @@ async function onRunClick(): Promise<void> {
 		// example keeps the same capability grant it had when pristine.
 		const inherited = selectedExample()?.permissions;
 		if (inherited) payload.permissions = inherited;
+	}
+
+	// A storage-scoped grant (pristine or inherited into a dirty run — either
+	// way selectedExample()?.permissions is the effective grant, see
+	// updatePermissionsHint) requires the server-validated storeId that
+	// selects this visitor's supervisor DO.
+	if (needsStoreId(selectedExample()?.permissions)) {
+		payload.storeId = STORE_ID;
 	}
 
 	// Get the Turnstile token if the widget is ready

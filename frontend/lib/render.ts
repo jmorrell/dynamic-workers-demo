@@ -5,6 +5,7 @@ export type Permissions = {
 	readonly cpuMs?: number;
 	readonly fetchDepth?: number;
 	readonly maxFetches?: number;
+	readonly storage?: 'scoped' | 'none';
 };
 
 // `assetPath` is a URL path served (asset-first) by the same origin, e.g.
@@ -91,14 +92,30 @@ export function buildCustomRunPayload(
 }
 
 // Human-readable one-liner for the static permissions hint under the Code label.
-// Returns null when there's nothing noteworthy to surface (default no-network grant).
+// Returns null when there's nothing noteworthy to surface (default no-network,
+// no-storage grant). A storage-only grant (fetch: 'none', storage: 'scoped')
+// still renders a hint — the fetch/depth/fetches/cpu segments are gated on a
+// network grant, but the storage segment is independent, so this can't just
+// early-return on `fetch === 'none'` anymore.
 export function formatPermissions(permissions: Permissions | undefined): string | null {
-	if (!permissions || permissions.fetch === 'none') return null;
-	const parts = [`fetch ${permissions.fetch}`];
-	if (typeof permissions.fetchDepth === 'number' && permissions.fetchDepth > 1) parts.push(`depth ${permissions.fetchDepth}`);
-	if (typeof permissions.maxFetches === 'number') parts.push(`fetches ${permissions.maxFetches}`);
-	if (typeof permissions.cpuMs === 'number') parts.push(`cpu ${permissions.cpuMs}ms`);
+	if (!permissions) return null;
+	const parts: string[] = [];
+	if (permissions.fetch !== 'none') {
+		parts.push(`fetch ${permissions.fetch}`);
+		if (typeof permissions.fetchDepth === 'number' && permissions.fetchDepth > 1) parts.push(`depth ${permissions.fetchDepth}`);
+		if (typeof permissions.maxFetches === 'number') parts.push(`fetches ${permissions.maxFetches}`);
+		if (typeof permissions.cpuMs === 'number') parts.push(`cpu ${permissions.cpuMs}ms`);
+	}
+	if (permissions.storage === 'scoped') parts.push('storage scoped');
+	if (parts.length === 0) return null;
 	return `permissions: ${parts.join(' · ')}`;
+}
+
+// Whether the effective grant requires the widget to send a storeId with the
+// run (and to offer the "clear stored data" affordance) — a storage: 'scoped'
+// grant, regardless of the network grant alongside it.
+export function needsStoreId(permissions: Permissions | undefined): boolean {
+	return permissions?.storage === 'scoped';
 }
 
 // Frontend copy of the wire type from src/runtime/trace.ts — see that file for
