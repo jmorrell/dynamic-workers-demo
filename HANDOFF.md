@@ -148,16 +148,18 @@ changes). Registry + tests + live verify like the other examples.
 - Workers Paid plan is a given (facets beta OK).
 - Storage MUST be hard-capped per user — see the layered quota design above
   (databaseSize backstop + per-IP store cap are the load-bearing layers).
+- **Scoping**: per-browser (anonymous localStorage storeId) × per-script, as
+  proposed — no communal stores.
+- **Quotas**: blessed as proposed — 5 MiB hard cap / 8 KiB values / 256 B keys
+  / 200 keys / 8 facets per store / 5 stores per IP (+ the 1 h sliding
+  self-destruct alarm decided earlier).
+- **DO detour**: fine — storage runs go through the StorageHost supervisor DO;
+  non-storage runs keep the direct path untouched.
 
-### Open questions for the user before starting
-1. Scoping: is per-browser (anonymous localStorage storeId) × per-script the
-   right store identity, or should stores be shareable (e.g. keyed only by
-   example id = one global communal store per example — fun but abusable)?
-2. Quota numbers (5 MiB hard cap / 8 KiB values / 200 keys / 8 facets per
-   store / 5 stores per IP / 7-day idle TTL are proposed defaults — bless or
-   adjust).
-3. OK that storage runs take the DO detour (slightly higher latency) while
-   non-storage runs keep the current direct path?
+No remaining open user questions — the spikes listed above (facets under
+wrangler dev/vitest, databaseSize inside a facet, alarms+facets coexistence,
+ctx.exports loopbacks from inside a DO, limits semantics for a facet-mounted
+class) are the gating work before building.
 
 ## Other open items (carried over, unassigned)
 1. **Deploy verification**: CPU budgets (`cpuMs`) are enforced only in
