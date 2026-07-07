@@ -31,6 +31,113 @@ export type RunOptions = {
 export const DEFAULT_COMPAT_DATE = '2026-06-22';
 
 /**
+ * The two loopback constructors the loaded worker needs from `ctx.exports`.
+ * `Cloudflare.Exports` is typed `{}` until GlobalProps names this worker's
+ * exports, so callers cast their `ctx.exports` / `this.ctx.exports` through this.
+ */
+export type LoaderExports = {
+	LogTailer: (o: { props: { runId: string } }) => Fetcher;
+	CapabilityGate: (o: {
+		props: { runId: string; allowedUrls: ReadonlyArray<string>; fetchDepth: number; maxFetches: number };
+	}) => Fetcher;
+};
+
+/**
+ * Builds the `WorkerLoaderWorkerCode` for a run — the SINGLE place both run
+ * paths construct the loaded worker from: the direct `runInLoader` path (which
+ * then invokes the default entrypoint) and the storage path
+ * (src/runtime/storage-host.ts, which mounts the worker's `StorageHarness` DO
+ * class as a facet). The only difference between the two is which isolate calls
+ * `ctx.exports` (here vs. the supervisor DO) and which export is invoked; the
+ * modules map, dep/wasm injection with the never-override guard, compat date,
+ * limits, `globalOutbound: null`, the GATE env loopback (page-links only) and
+ * the LogTailer tail are all identical and live here.
+ */
+export function buildWorkerCode(
+	env: Env,
+	code: string,
+	runId: string,
+	exportsObj: Cloudflare.Exports,
+	opts: RunOptions,
+): WorkerLoaderWorkerCode {
+	const { compatDate = DEFAULT_COMPAT_DATE, extraModules, wasmModules, permissions, allowedUrls } = opts;
+
+	// LOADER_COMPAT_DATE is a test-only override (set in vitest.config.mts): the
+	// local workerd binary hard-errors loading a Dynamic Worker dated past its
+	// supported compat date, so tests pin an older, loadable date regardless of
+	// what compatDate the caller resolved for production.
+	const compatibilityDate = env.ENVIRONMENT === 'test' && env.LOADER_COMPAT_DATE ? env.LOADER_COMPAT_DATE : compatDate;
+
+	const modules: Record<string, string | { js: string } | { wasm: ArrayBuffer }> = {
+		'harness.js': HARNESS_SOURCE,
+		'user.js': code,
+	};
+
+	// Extra modules (e.g. shared deps for edited example code — see src/index.ts)
+	// are injected as the typed `{ js }` form, keyed by exact import specifier (no
+	// automatic '.js' suffix resolution). Never let a caller-supplied key shadow
+	// the harness or user module.
+	if (extraModules) {
+		for (const [specifier, source] of Object.entries(extraModules)) {
+			if (specifier === 'harness.js' || specifier === 'user.js') continue;
+			modules[specifier] = { js: source };
+		}
+	}
+
+	// Wasm modules (e.g. the wasm-add example's './add.wasm') are injected as the
+	// typed `{ wasm }` form, keyed the same way — same never-override guard.
+	if (wasmModules) {
+		for (const [name, bytes] of Object.entries(wasmModules)) {
+			if (name === 'harness.js' || name === 'user.js') continue;
+			// WorkerLoaderModule.wasm is typed as ArrayBuffer; slice() copies out
+			// exactly this view's bytes as a standalone buffer.
+			modules[name] = { wasm: bytes.slice().buffer };
+		}
+	}
+
+	const exports = exportsObj as unknown as LoaderExports;
+
+	// The loaded worker's env carries at most the CapabilityGate loopback — never
+	// host bindings/secrets. It appears only when fetch is permitted; otherwise
+	// env stays {} and the sandbox is fully network-blocked. globalOutbound stays
+	// null regardless (the gate is a service binding); INPUT is passed per call.
+	const workerEnv: Record<string, unknown> =
+		permissions?.fetch === 'page-links'
+			? {
+					GATE: exports.CapabilityGate({
+						props: {
+							runId,
+							allowedUrls: allowedUrls ?? [],
+							fetchDepth: clampFetchDepth(permissions.fetchDepth),
+							maxFetches: clampMaxFetches(permissions.maxFetches),
+						},
+					}),
+				}
+			: {};
+
+	// subRequests mirrors the granted maxFetches (host-side gate tally and this
+	// sandbox-side platform limit must stay in lockstep) — but only under a
+	// page-links grant; with no fetch permission there's no gate to mirror.
+	const subRequests = permissions?.fetch === 'page-links' ? clampMaxFetches(permissions.maxFetches) : 5;
+
+	const workerCode: WorkerLoaderWorkerCode = {
+		compatibilityDate,
+		compatibilityFlags: ['nodejs_compat'],
+		mainModule: 'harness.js',
+		modules,
+		env: workerEnv,
+		globalOutbound: null, // Block all ambient outbound fetch; permitted fetch goes through GATE
+		limits: {
+			cpuMs: clampCpuMs(permissions?.cpuMs, CPU_LIMIT_MS),
+			subRequests,
+		},
+		tails: [exports.LogTailer({ props: { runId } })],
+	};
+
+	return workerCode;
+}
+
+/**
  * Runs untrusted code against a URL in a sandboxed dynamic worker.
  *
  * Steps:
@@ -49,7 +156,6 @@ export async function runInLoader(
 	ctx: ExecutionContext,
 	opts: RunOptions = {},
 ): Promise<RunResult> {
-	const { compatDate = DEFAULT_COMPAT_DATE, extraModules, wasmModules, permissions, allowedUrls } = opts;
 	try {
 		// 1. Scope the loader id to this run, not just the code. The tail worker
 		// binding (below) is attached at isolate creation time, so an id shared
@@ -59,96 +165,9 @@ export async function runInLoader(
 		// per-call (see below) since that's orthogonal, independently-good hygiene.
 		const id = `${await hashCode(code)}:${runId}`;
 
-		// 2. Get or create the worker via the loader
-		const worker = env.LOADER.get(id, async () => {
-			// LOADER_COMPAT_DATE is a test-only override (set in vitest.config.mts):
-			// the local workerd binary hard-errors loading a Dynamic Worker dated
-			// past its supported compat date, so tests pin an older, loadable date
-			// regardless of what compatDate the caller resolved for production.
-			const compatibilityDate = env.ENVIRONMENT === 'test' && env.LOADER_COMPAT_DATE ? env.LOADER_COMPAT_DATE : compatDate;
-
-			const modules: Record<string, string | { js: string } | { wasm: ArrayBuffer }> = {
-				'harness.js': HARNESS_SOURCE,
-				'user.js': code,
-			};
-
-			// Extra modules (e.g. shared deps for edited example code — see
-			// src/index.ts) are injected as the typed `{ js }` form, keyed by
-			// exact import specifier (no automatic '.js' suffix resolution).
-			// Never let a caller-supplied key shadow the harness or user module.
-			if (extraModules) {
-				for (const [specifier, source] of Object.entries(extraModules)) {
-					if (specifier === 'harness.js' || specifier === 'user.js') continue;
-					modules[specifier] = { js: source };
-				}
-			}
-
-			// Wasm modules (e.g. the wasm-add example's './add.wasm') are injected
-			// as the typed `{ wasm }` form, keyed the same way — same never-override
-			// guard as extraModules above.
-			if (wasmModules) {
-				for (const [name, bytes] of Object.entries(wasmModules)) {
-					if (name === 'harness.js' || name === 'user.js') continue;
-					// WorkerLoaderModule.wasm is typed as ArrayBuffer; slice() copies out
-					// exactly this view's bytes as a standalone buffer (bytes.buffer alone
-					// could be larger/shared if the Uint8Array is itself a view).
-					modules[name] = { wasm: bytes.slice().buffer };
-				}
-			}
-
-			// ctx.exports is typed {} until GlobalProps is generated; narrow the loopback bindings.
-			const exports = ctx.exports as {
-				LogTailer: (o: { props: { runId: string } }) => Fetcher;
-				CapabilityGate: (o: {
-					props: { runId: string; allowedUrls: ReadonlyArray<string>; fetchDepth: number; maxFetches: number };
-				}) => Fetcher;
-			};
-
-			// The loaded worker's env carries at most the CapabilityGate loopback —
-			// never host bindings/secrets. It appears only when fetch is permitted;
-			// otherwise env stays {} and the sandbox is fully network-blocked.
-			// globalOutbound stays null regardless (the gate is a service binding,
-			// unaffected by globalOutbound); INPUT is passed to run() per invocation.
-			const workerEnv: Record<string, unknown> =
-				permissions?.fetch === 'page-links'
-					? {
-							GATE: exports.CapabilityGate({
-								props: {
-									runId,
-									allowedUrls: allowedUrls ?? [],
-									fetchDepth: clampFetchDepth(permissions.fetchDepth),
-									maxFetches: clampMaxFetches(permissions.maxFetches),
-								},
-							}),
-						}
-					: {};
-
-			// subRequests mirrors the granted maxFetches (host-side tally in the gate
-			// and this sandbox-side platform limit must stay in lockstep, same as
-			// they always have at the fixed 5/5 default) — but only under a
-			// page-links grant. With no fetch permission there's no gate to mirror
-			// and no reason to widen a sandbox that has zero network access anyway,
-			// so subRequests stays at the old constant 5 in that case.
-			const subRequests =
-				permissions?.fetch === 'page-links' ? clampMaxFetches(permissions.maxFetches) : 5;
-
-			const workerCode: WorkerLoaderWorkerCode = {
-				compatibilityDate,
-				compatibilityFlags: ['nodejs_compat'],
-				mainModule: 'harness.js',
-				modules,
-				env: workerEnv,
-				globalOutbound: null, // Block all ambient outbound fetch; permitted fetch goes through GATE
-				limits: {
-					cpuMs: clampCpuMs(permissions?.cpuMs, CPU_LIMIT_MS),
-					subRequests,
-				},
-			};
-
-			workerCode.tails = [exports.LogTailer({ props: { runId } })];
-
-			return workerCode;
-		});
+		// 2. Get or create the worker via the loader. buildWorkerCode is the single
+		// shared construction shared with the storage path (storage-host.ts).
+		const worker = env.LOADER.get(id, async () => buildWorkerCode(env, code, runId, ctx.exports, opts));
 
 		// 3. Invoke the harness via RPC, passing INPUT per call (see step 1 note).
 		// getEntrypoint() is opaquely typed; the loaded mainModule (HARNESS_SOURCE)

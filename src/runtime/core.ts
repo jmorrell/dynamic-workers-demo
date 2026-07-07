@@ -67,7 +67,97 @@ export function isValidPermissions(value: unknown): value is Permissions {
 	if (fetchDepth !== undefined && typeof fetchDepth !== 'number') return false;
 	const maxFetches = (value as Record<string, unknown>).maxFetches;
 	if (maxFetches !== undefined && typeof maxFetches !== 'number') return false;
+	const storage = (value as Record<string, unknown>).storage;
+	if (storage !== undefined && storage !== 'scoped' && storage !== 'none') return false;
 	return true;
+}
+
+/** Canonical crypto.randomUUID() shape (case-insensitive), e.g. RFC 4122 v4. */
+const STORE_ID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/**
+ * Validates and normalizes a client-minted store id. Requires the
+ * `crypto.randomUUID()` shape (case-insensitive) and normalizes to lowercase so
+ * the derived supervisor DO name is stable regardless of request casing. Returns
+ * the normalized id, or null when the value is absent/malformed.
+ */
+export function normalizeStoreId(value: unknown): string | null {
+	if (typeof value !== 'string') return null;
+	if (!STORE_ID_RE.test(value)) return null;
+	return value.toLowerCase();
+}
+
+/**
+ * Reserved supervisor DO name for the per-IP store registry singleton. Guarded
+ * from ever colliding with a real store: store ids must be uuids
+ * (normalizeStoreId), and this sentinel is not a uuid.
+ */
+export const STORE_REGISTRY_NAME = '__registry__';
+
+/**
+ * Derives the facet name (store key) for a run — the identity WITHIN a
+ * supervisor DO. The `storeId` already selects the supervisor DO
+ * (`idFromName(storeId)`), so the facet name only needs the SCRIPT identity: the
+ * example id for a pristine example run, or `custom:${codeHash}` for a custom
+ * run. Edited example code therefore hashes differently and gets a distinct
+ * store (no cross-script reads through a shared facet). Pure.
+ */
+export function deriveStoreKey(worker: { type: 'example'; exampleId: string } | { type: 'custom'; codeHash: string }): string {
+	return worker.type === 'example' ? worker.exampleId : `custom:${worker.codeHash}`;
+}
+
+/** Advisory + hard caps for a run's `env.storage` facet. See harness-source.ts (SYNC PARTNER). */
+export const STORE_MAX_KEY_BYTES = 256;
+export const STORE_MAX_VALUE_BYTES = 8 * 1024; // 8 KiB (JSON-serialized value)
+export const STORE_MAX_KEYS = 200;
+export const STORE_MAX_BYTES = 5 * 1024 * 1024; // 5 MiB hard backstop (facet databaseSize)
+
+/**
+ * Pure quota gate for a single `env.storage.put`, checked in order: the hard
+ * `databaseSize` backstop first (authoritative, includes SQLite overhead), then
+ * the per-op advisory caps. Returns `{ ok: true }` or a human-readable rejection.
+ *
+ * SYNC PARTNER: the harness (src/runtime/harness-source.ts) inlines this exact
+ * logic (with the constants above interpolated) because it runs inside the
+ * loaded worker where core.ts isn't importable. Change both together.
+ */
+export function checkStorageWrite(p: {
+	keyByteLength: number;
+	valueByteLength: number;
+	currentKeyCount: number;
+	keyAlreadyExists: boolean;
+	databaseSize: number;
+}): { ok: true } | { ok: false; message: string } {
+	if (p.databaseSize >= STORE_MAX_BYTES) {
+		return { ok: false, message: `storage full: ${STORE_MAX_BYTES}-byte database cap reached` };
+	}
+	if (p.keyByteLength > STORE_MAX_KEY_BYTES) {
+		return { ok: false, message: `storage key exceeds ${STORE_MAX_KEY_BYTES}-byte limit` };
+	}
+	if (p.valueByteLength > STORE_MAX_VALUE_BYTES) {
+		return { ok: false, message: `storage value exceeds ${STORE_MAX_VALUE_BYTES}-byte limit` };
+	}
+	if (!p.keyAlreadyExists && p.currentKeyCount >= STORE_MAX_KEYS) {
+		return { ok: false, message: `storage key count exceeds ${STORE_MAX_KEYS}-key limit` };
+	}
+	return { ok: true };
+}
+
+/**
+ * Pure LRU selection: given the full set of tracked entries (each with a
+ * `lastUsed` timestamp) and a cap, returns the keys to evict so the set fits the
+ * cap — the oldest entries beyond the cap, oldest first. Used for both the
+ * per-store facet cap and the per-IP store cap. Ties (equal lastUsed) break on
+ * key for determinism.
+ */
+export function selectEvictions(entries: ReadonlyArray<{ key: string; lastUsed: number }>, cap: number): string[] {
+	if (entries.length <= cap) return [];
+	const byNewest = [...entries].sort((a, b) => b.lastUsed - a.lastUsed || (a.key < b.key ? -1 : a.key > b.key ? 1 : 0));
+	// Everything past the cap (the oldest) is evicted; return oldest-first.
+	return byNewest
+		.slice(cap)
+		.reverse()
+		.map((e) => e.key);
 }
 
 /** Hard bounds for a custom run's declared wasm modules. */

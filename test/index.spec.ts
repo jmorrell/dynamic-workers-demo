@@ -1601,3 +1601,171 @@ describe('Static assets routing', () => {
 		expect(text.toLowerCase()).toMatch(/(app\.js|editor|example|widget)/);
 	});
 });
+
+describe('POST /api/run — storage permission (storeId gate + StorageHost routing)', () => {
+	beforeEach(() => {
+		setTurnstileVerifier(async () => ({ ok: true, errorCodes: [] }));
+		// Target fetch is stubbed (same helper the other run tests use) so these
+		// tests never depend on real network reachability of example.com.
+		stubTargetFetch('<html>Test page</html>');
+	});
+
+	afterEach(() => {
+		vi.unstubAllGlobals();
+		setTurnstileVerifier(async () => ({ ok: false, errorCodes: ['reset'] }));
+	});
+
+	// No registered example currently carries a storage grant (feed-watcher is a
+	// later milestone), so the storage path is exercised through custom runs,
+	// whose request-supplied permissions are the effective grant.
+	const storageCode = `export default (env, input) => {
+		const n = (env.storage.get('count') ?? 0) + 1;
+		env.storage.put('count', n);
+		return { count: n };
+	}`;
+
+	function runRequest(body: Record<string, unknown>, ip: string) {
+		return new IncomingRequest('http://example.com/api/run', {
+			method: 'POST',
+			headers: { 'CF-Connecting-IP': ip },
+			body: JSON.stringify(body),
+		});
+	}
+
+	it('returns 400 bad_request when a storage-scoped grant has no storeId', async () => {
+		const request = runRequest(
+			{
+				url: 'http://example.com/test',
+				worker: { type: 'custom', customCode: storageCode },
+				permissions: { fetch: 'none', storage: 'scoped' },
+			},
+			'203.0.113.150',
+		);
+		const ctx = createExecutionContext();
+		const response = await worker.fetch(request, env, ctx);
+		await waitOnExecutionContext(ctx);
+
+		expect(response.status).toBe(400);
+		const data = await response.json<{ ok: boolean; error: { kind: string; message: string } }>();
+		expect(data.ok).toBe(false);
+		expect(data.error.kind).toBe('bad_request');
+		expect(data.error.message).toContain('storeId');
+	});
+
+	it('returns 400 bad_request for a malformed storeId', async () => {
+		const request = runRequest(
+			{
+				url: 'http://example.com/test',
+				worker: { type: 'custom', customCode: storageCode },
+				permissions: { fetch: 'none', storage: 'scoped' },
+				storeId: 'not-a-uuid',
+			},
+			'203.0.113.151',
+		);
+		const ctx = createExecutionContext();
+		const response = await worker.fetch(request, env, ctx);
+		await waitOnExecutionContext(ctx);
+
+		expect(response.status).toBe(400);
+		const data = await response.json<{ ok: boolean; error: { kind: string } }>();
+		expect(data.error.kind).toBe('bad_request');
+	});
+
+	it('a storage-granted run reaches the StorageHost path and surfaces the pool facets-absence as a structured error (not a crash)', async () => {
+		// DO facets don't exist in the vitest pool (workerd 1.20260310 — see
+		// src/runtime/AGENTS.md gotchas), so a run that ROUTES correctly through
+		// StorageHost comes back as a run-shaped 200 with a structured
+		// loader_failed mentioning facets. This is the pool's routing proof;
+		// actual persistence is wrangler-dev/deploy-verified.
+		const request = runRequest(
+			{
+				url: 'http://example.com/test',
+				worker: { type: 'custom', customCode: storageCode },
+				permissions: { fetch: 'none', storage: 'scoped' },
+				storeId: crypto.randomUUID(),
+			},
+			'203.0.113.152',
+		);
+		const ctx = createExecutionContext();
+		const response = await worker.fetch(request, env, ctx);
+		await waitOnExecutionContext(ctx);
+
+		expect(response.status).toBe(200);
+		const data = await response.json<{
+			ok: boolean;
+			error: { kind: string; message: string } | null;
+			logs: unknown[];
+			trace?: { spans: Array<{ status: string; attrs: Record<string, unknown> }> };
+		}>();
+		expect(data.ok).toBe(false);
+		expect(data.error?.kind).toBe('loader_failed');
+		expect(data.error?.message).toContain('facets');
+		// The storage path's loader span carries the distinguishing attr.
+		const loaderSpan = data.trace?.spans.find((s) => s.attrs.name === 'loader');
+		expect(loaderSpan?.attrs.storage).toBe(true);
+	});
+
+	it('accepts an uppercase storeId (normalized server-side) and still routes to StorageHost', async () => {
+		const request = runRequest(
+			{
+				url: 'http://example.com/test',
+				worker: { type: 'custom', customCode: storageCode },
+				permissions: { fetch: 'none', storage: 'scoped' },
+				storeId: crypto.randomUUID().toUpperCase(),
+			},
+			'203.0.113.153',
+		);
+		const ctx = createExecutionContext();
+		const response = await worker.fetch(request, env, ctx);
+		await waitOnExecutionContext(ctx);
+
+		expect(response.status).toBe(200);
+		const data = await response.json<{ ok: boolean; error: { kind: string; message: string } | null }>();
+		expect(data.ok).toBe(false);
+		expect(data.error?.kind).toBe('loader_failed');
+		expect(data.error?.message).toContain('facets');
+	});
+
+	it('a non-storage run with an (ignored) storeId keeps the direct path and succeeds', async () => {
+		const request = runRequest(
+			{
+				url: 'http://example.com/test',
+				worker: { type: 'custom', customCode: 'export default (env, input) => input.status' },
+				permissions: { fetch: 'none' },
+				storeId: crypto.randomUUID(),
+			},
+			'203.0.113.154',
+		);
+		const ctx = createExecutionContext();
+		const response = await worker.fetch(request, env, ctx);
+		await waitOnExecutionContext(ctx);
+
+		expect(response.status).toBe(200);
+		const data = await response.json<{ ok: boolean; result: unknown; trace?: { spans: Array<{ attrs: Record<string, unknown> }> } }>();
+		expect(data.ok).toBe(true);
+		expect(data.result).toBe(200);
+		// Direct path: no storage attr on the loader span.
+		const loaderSpan = data.trace?.spans.find((s) => s.attrs.name === 'loader');
+		expect(loaderSpan?.attrs.storage).toBeUndefined();
+	});
+
+	it('an explicit storage:"none" grant behaves exactly like no storage grant', async () => {
+		const request = runRequest(
+			{
+				url: 'http://example.com/test',
+				worker: { type: 'custom', customCode: 'export default (env, input) => Object.keys(env)' },
+				permissions: { fetch: 'none', storage: 'none' },
+			},
+			'203.0.113.155',
+		);
+		const ctx = createExecutionContext();
+		const response = await worker.fetch(request, env, ctx);
+		await waitOnExecutionContext(ctx);
+
+		expect(response.status).toBe(200);
+		const data = await response.json<{ ok: boolean; result: unknown }>();
+		expect(data.ok).toBe(true);
+		// env stays {} — no storage capability, no gate.
+		expect(data.result).toEqual([]);
+	});
+});

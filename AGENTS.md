@@ -11,19 +11,27 @@ library, and an embeddable widget.
 Transforms are `(env, input) => …`: `env` is an explicit capability object (its
 FIRST argument, mirroring how Workers hand bindings to code), `input` is the page
 snapshot. By default `env` is `{}` and the sandbox is fully network-blocked. A
-permission grant (`{ fetch: 'page-links' | 'none'; cpuMs?; fetchDepth?; maxFetches? }`)
+permission grant (`{ fetch: 'page-links' | 'none'; cpuMs?; fetchDepth?; maxFetches?;
+storage? }`)
 can unlock `env.fetch(url)` / `env.fetchFile(url)`, but they may ONLY reach URLs
 that the originally fetched page references (parsed from the payload — no
 arbitrary spidering), unless `fetchDepth` (default 1, clamped `[1,3]`) is raised:
 at depth N, URLs referenced by pages the run has successfully text-fetched become
 fetchable too, transitively, up to N-1 hops out. `maxFetches` (default 5, clamped
 `[1,100]`) raises or lowers the per-run cap on `env.fetch`/`env.fetchFile` calls.
-All policy (allowlist, SSRF/IP guards, size/timeout/count caps) lives host-side
+`storage: 'scoped'` unlocks `env.storage` (get/put/delete/list), a per-visitor
+(`storeId` uuid in the run request, required under the grant) × per-script
+key/value store backed by a Durable Object facet's own isolated SQLite DB,
+routed through the `StorageHost` supervisor DO; capped (256 B keys / 8 KiB
+values / 200 keys / 5 MiB hard `databaseSize` backstop / 8 facets per store / 5
+stores per IP) and ephemeral by design — a sliding 1 h self-destruct alarm
+deletes the whole store after the last run. All policy (allowlist, SSRF/IP
+guards, size/timeout/count caps) lives host-side
 in the `CapabilityGate`, which
 the sandbox reaches through a `ctx.exports` loopback attached as the loaded
 worker's `env.GATE`. Examples run with their registered `permissions`; custom
 runs supply their own (validated, `cpuMs` clamped to `[1,5000]`). See
-`src/runtime/AGENTS.md` for the gate/extraction contracts.
+`src/runtime/AGENTS.md` for the gate/extraction/storage contracts.
 
 ## Multi-file examples (wasm modules)
 An example (`ExampleMeta` in `src/examples/registry.ts`) may declare
@@ -116,6 +124,15 @@ deploy-verified only:
   not read from a wrangler var. `LOADER_COMPAT_DATE` only exists as a test-only
   override (set in `vitest.config.mts`, active when `ENVIRONMENT=test`) because
   local workerd hard-errors loading future-dated Dynamic Workers.
+- Durable Object facets (the `storage` capability's isolation mechanism) WORK
+  under `wrangler dev` (workerd 1.20260617) but DO NOT EXIST in the vitest
+  workers pool (workerd 1.20260310 predates them): `ctx.facets` is `undefined`
+  there, so a storage-granted run in the pool returns a structured
+  `loader_failed` ("facets are unavailable") instead of persisting. Facet e2e is
+  wrangler-dev/deploy-verified only; pool tests cover the pure logic, the
+  supervisor's bookkeeping, and pin the absence
+  (`test/runtime/storage-host.spec.ts`). See `src/runtime/AGENTS.md` gotchas for
+  the facet-delete/deleteAll quirks.
 
 # Cloudflare Workers
 

@@ -30,12 +30,17 @@ export type UserWorker =
  * is the per-run cap on `env.fetch`/`env.fetchFile` calls (both host-tallied by the
  * CapabilityGate and mirrored into the sandbox's own `limits.subRequests`); default
  * 5, clamped to [1,100] (`clampMaxFetches` in core).
+ * `storage` unlocks `env.storage` (get/put/delete/list) backed by a per-store,
+ * per-script isolated SQLite DB (a Durable Object facet). Default (absent) is
+ * `'none'`: no persistence. `'scoped'` requires the run request to carry a
+ * `storeId` (uuid) — see `RunRequestBody.storeId`. See src/runtime/storage-host.ts.
  */
 export type Permissions = {
 	fetch: 'page-links' | 'none';
 	cpuMs?: number;
 	fetchDepth?: number;
 	maxFetches?: number;
+	storage?: 'scoped' | 'none';
 };
 
 export type RunRequestBody = {
@@ -43,6 +48,11 @@ export type RunRequestBody = {
 	worker: UserWorker;
 	turnstileToken?: string;
 	permissions?: Permissions;
+	// Anonymous, client-minted store identity (uuid). REQUIRED when the effective
+	// grant has `storage: 'scoped'` — it selects the supervisor Durable Object
+	// (`idFromName(storeId)`) that hosts this visitor's per-script storage facets.
+	// Ignored/allowed-absent when storage isn't granted. See src/runtime/storage-host.ts.
+	storeId?: string;
 };
 
 /** Result of `env.fetch(url)` — a text fetch through the CapabilityGate. */
@@ -52,13 +62,29 @@ export type FetchTextResult = { status: number; contentType: string; body: strin
 export type FetchFileResult = { status: number; contentType: string; bytes: Uint8Array; truncated: boolean };
 
 /**
+ * Persistent key/value store handed to a transform as `env.storage` under a
+ * `storage: 'scoped'` grant. Backed by the run's own isolated SQLite DB (a DO
+ * facet). Values are plain JSON-serializable data. Advisory caps are enforced
+ * in the harness wrapper (key ≤ 256 B, value ≤ 8 KiB, ≤ 200 keys) with a hard
+ * 5 MiB `databaseSize` backstop; a rejected write throws a catchable Error.
+ */
+export type StorageApi = {
+	get(key: string): unknown;
+	put(key: string, value: unknown): void;
+	delete(key: string): boolean;
+	list(): string[];
+};
+
+/**
  * The capability object handed to a transform as its FIRST argument. Empty `{}`
  * under the default no-network grant; with fetch permission it carries `fetch`
- * and `fetchFile`, which may only reach URLs referenced by the fetched page.
+ * and `fetchFile`, which may only reach URLs referenced by the fetched page;
+ * with a storage grant it carries `storage`.
  */
 export type TransformEnv = {
 	fetch?: (url: string) => Promise<FetchTextResult>;
 	fetchFile?: (url: string) => Promise<FetchFileResult>;
+	storage?: StorageApi;
 };
 
 /** Structured result returned by the harness over RPC. */

@@ -28,14 +28,62 @@ the target URL, captures the sandbox's logs, and enforces abuse gates.
   default no-network grant; with fetch permission it is
   `{ fetch(url), fetchFile(url) }`, both proxying to the host `CapabilityGate`.
 - **Permissions**: `type Permissions = { fetch: 'page-links' | 'none'; cpuMs?;
-  fetchDepth?; maxFetches? }`. Default `{ fetch: 'none' }`; `cpuMs` defaults to
-  `CPU_LIMIT_MS` (50) and is clamped to `[1, 5000]` (`clampCpuMs` in core);
-  `fetchDepth` (meaningful only with `fetch: 'page-links'`) defaults to 1 and is
-  clamped to `[1, 3]` (`clampFetchDepth` in core); `maxFetches` (meaningful only
-  with `fetch: 'page-links'`) defaults to 5 and is clamped to `[1, 100]`
-  (`clampMaxFetches` in core). Example runs use the example's registered
-  permissions (request-supplied ignored); custom runs use the request's,
-  validated/clamped (bad shape → 400).
+  fetchDepth?; maxFetches?; storage? }`. Default `{ fetch: 'none' }`; `cpuMs`
+  defaults to `CPU_LIMIT_MS` (50) and is clamped to `[1, 5000]` (`clampCpuMs` in
+  core); `fetchDepth` (meaningful only with `fetch: 'page-links'`) defaults to 1
+  and is clamped to `[1, 3]` (`clampFetchDepth` in core); `maxFetches` (meaningful
+  only with `fetch: 'page-links'`) defaults to 5 and is clamped to `[1, 100]`
+  (`clampMaxFetches` in core); `storage: 'scoped' | 'none'` (default none)
+  unlocks `env.storage` and REQUIRES the run request to carry a uuid `storeId`
+  (validated + lowercased by `normalizeStoreId` in core; missing/malformed →
+  400). Example runs use the example's registered permissions (request-supplied
+  ignored); custom runs use the request's, validated/clamped (bad shape → 400).
+- **Storage contract** (`storage: 'scoped'`): a storage-granted run routes
+  `handleRun → env.STORAGE_HOST.get(idFromName(storeId)).run(args)` (the
+  `StorageHost` supervisor DO, `storage-host.ts`) instead of `runInLoader`;
+  non-storage runs keep the direct path untouched. The supervisor loads the SAME
+  harness+user worker via `this.env.LOADER` — both paths build the loaded worker
+  through `buildWorkerCode` (`loader.ts`), the ONE construction site (modules
+  map + injection guards, compat date, limits, `globalOutbound: null`, GATE env
+  loopback, LogTailer tail); the only difference is which isolate calls
+  `ctx.exports` and which export gets invoked. The supervisor mounts the
+  worker's `StorageHarness` DO class as a facet (`ctx.facets.get(storeKey, …)`
+  with `worker.getDurableObjectClass('StorageHarness')`) and RPCs `run(input)`.
+  The facet name (store key) comes from `deriveStoreKey` (core, pure):
+  `exampleId` for pristine example runs, `custom:${hashCode(code)}` for custom
+  runs — edited code = different hash = different store (the storeId itself
+  picks the supervisor DO). Each facet has its OWN isolated SQLite DB
+  (`ctx.storage`) — the actual isolation boundary. `StorageHarness.run` mirrors
+  the default entrypoint plus hands the transform
+  `env.storage = { get, put, delete, list }` over the facet's `ctx.storage.kv`
+  (JSON-encoded plain-data values), enforcing key ≤ 256 B, serialized value ≤
+  8 KiB, ≤ 200 keys, and a hard 5 MiB `ctx.storage.sql.databaseSize` backstop on
+  every put (constants live in core.ts and are interpolated into
+  `HARNESS_SOURCE`; the cap LOGIC is a SYNC PARTNER with core's
+  `checkStorageWrite`). A rejected write throws a catchable Error, consistent
+  with gate denials. `StorageHost.run` NEVER throws to handleRun —
+  facet-mount/RPC failures return as structured `loader_failed`-taxonomy results
+  (`StorageRunResult`).
+- **Trace drain inside the DO (critical)**: the gate's module-scoped span/count
+  maps live in the isolate that CONSTRUCTED the loopback — on the storage path
+  that's the StorageHost DO's isolate, not handleRun's. `StorageHost.run` itself
+  drains `collectGateSpans(runId)` and calls `releaseGateRun(runId)`, returning
+  the drafts in its RPC result (`StorageRunResult.gateSpans`); handleRun folds
+  them into its Tracer exactly like the direct path (parented under the
+  loader-phase span, which carries `storage: true` on this path).
+- **Storage quotas beyond the facet caps**: the supervisor bookkeeps facet names
+  + last-used in its own storage; cap `STORE_FACET_CAP` (8) facets per store,
+  LRU-evicted via `ctx.facets.delete` — facets are tracked only AFTER a
+  successful first RPC and deletes are try/caught (see gotchas). A per-IP
+  registry — a reserved `StorageHost` singleton,
+  `idFromName(STORE_REGISTRY_NAME = '__registry__')`, guarded from colliding
+  with real storeIds because those must be uuids — caps `STORE_CAP_PER_IP` (5)
+  active stores per IP (`touchStore`, LRU; an evicted store's supervisor is torn
+  down via `selfDestruct()`). Every storage run resets a sliding self-destruct
+  alarm (now + 1h, `STORE_TTL_MS`); on fire the supervisor deletes its facets,
+  clears its bookkeeping, `deleteAlarm()`, then best-effort `deleteAll()` —
+  stores are ephemeral BY DESIGN (~1h past the last run). LRU selection math is
+  pure (`selectEvictions`, core).
 - **Gate contract**: `CapabilityGate` (WorkerEntrypoint, reached via
   `ctx.exports.CapabilityGate({ props: { runId, allowedUrls, fetchDepth, maxFetches } })`,
   attached as the loaded worker's `env.GATE`). `fetchText(url) → { status,
@@ -139,7 +187,10 @@ the target URL, captures the sandbox's logs, and enforces abuse gates.
   (mirroring the granted `maxFetches`) caps this from the other side in
   production; the host tally is the locally testable half.
 - **SYNC PARTNER**: `harness-source.ts` inlines `classifyTransformError` as a
-  string; `core.ts` is canonical. Change both together.
+  string, and inlines the `env.storage` cap-check logic mirroring core's
+  `checkStorageWrite` (the numeric limits are interpolated from core's
+  `STORE_MAX_*` constants, but the check ordering/logic is hand-copied);
+  `core.ts` is canonical for both. Change both together.
 
 ## Invariants
 - Loaded worker `env` carries at most the `CapabilityGate` loopback (`{ GATE }`,
@@ -192,6 +243,10 @@ the target URL, captures the sandbox's logs, and enforces abuse gates.
   `clampCpuMs`, `isValidPermissions`, error classifiers
 - `capability-gate.ts` - `CapabilityGate` loopback entrypoint (host-side fetch
   policy for the sandbox); exported from `src/index.ts` for `ctx.exports`
+- `storage-host.ts` - `StorageHost` supervisor DO (storage-granted run path:
+  loads the worker via `buildWorkerCode`, mounts `StorageHarness` as a facet,
+  drains gate spans in-DO; also the per-IP store registry singleton + sliding
+  self-destruct alarm); exported from `src/index.ts`, bound as `STORAGE_HOST`
 - `trace.ts` - per-invocation trace types + `Tracer` (span ids, absolute→
   run-relative normalization); NOT OTel — the bespoke minimal span shape is the
   contract. workerd advances timers at I/O boundaries, so the waterfall shows
@@ -212,3 +267,20 @@ the target URL, captures the sandbox's logs, and enforces abuse gates.
 - `HARNESS_SOURCE`'s `import userModule from './user.js'` only resolves inside the
   loaded worker (the loader injects `user.js` into the `modules` map), not at host
   compile time.
+- **DO facets exist under `wrangler dev` but NOT in the vitest workers pool**:
+  wrangler dev's workerd (1.20260617) has `ctx.facets`; the pool's pinned
+  workerd (1.20260310, via @cloudflare/vitest-pool-workers 0.12.x → wrangler
+  4.72.0) predates the April 2026 facets launch, so `ctx.facets` is `undefined`
+  there. `StorageHost.run` guards this into a structured `loader_failed`
+  ("facets are unavailable"), and `test/runtime/storage-host.spec.ts` pins the
+  absence. NEVER try to e2e a facet in the pool — facet persistence is
+  wrangler-dev/deploy-verified only; pool tests cover pure logic + supervisor
+  bookkeeping.
+- **`ctx.storage.deleteAll()` throws "internal error" after `ctx.facets.delete()`**
+  on local workerd (spike-verified 2026-07-06; deploy re-verification pending).
+  `StorageHost._teardown` therefore deletes its bookkeeping rows explicitly,
+  then calls `deleteAll()` best-effort in try/catch — a throw leaves only tiny
+  idle residue.
+- **Deleting a never-RPC'd facet throws "internal error"** — the supervisor only
+  tracks a facet AFTER its first successful `run` RPC, and every
+  `ctx.facets.delete` is individually try/caught.

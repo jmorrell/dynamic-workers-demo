@@ -7,6 +7,14 @@ import {
 	clampFetchDepth,
 	clampMaxFetches,
 	isValidPermissions,
+	normalizeStoreId,
+	deriveStoreKey,
+	checkStorageWrite,
+	selectEvictions,
+	STORE_MAX_BYTES,
+	STORE_MAX_KEY_BYTES,
+	STORE_MAX_VALUE_BYTES,
+	STORE_MAX_KEYS,
 } from '@/runtime/core';
 
 describe('hashCode', () => {
@@ -280,5 +288,144 @@ describe('isValidPermissions', () => {
 
 	it('rejects an invalid fetch value', () => {
 		expect(isValidPermissions({ fetch: 'everything' })).toBe(false);
+	});
+
+	it('accepts a valid storage value', () => {
+		expect(isValidPermissions({ fetch: 'none', storage: 'scoped' })).toBe(true);
+		expect(isValidPermissions({ fetch: 'none', storage: 'none' })).toBe(true);
+	});
+
+	it('accepts an absent storage', () => {
+		expect(isValidPermissions({ fetch: 'none' })).toBe(true);
+	});
+
+	it('rejects an invalid storage value', () => {
+		expect(isValidPermissions({ fetch: 'none', storage: 'everything' })).toBe(false);
+		expect(isValidPermissions({ fetch: 'none', storage: true })).toBe(false);
+	});
+});
+
+describe('normalizeStoreId', () => {
+	it('accepts a canonical lowercase uuid unchanged', () => {
+		const id = '11111111-2222-4333-8444-555555555555';
+		expect(normalizeStoreId(id)).toBe(id);
+	});
+
+	it('normalizes an uppercase uuid to lowercase', () => {
+		expect(normalizeStoreId('AAAAAAAA-BBBB-4CCC-8DDD-EEEEEEEEEEEE')).toBe('aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee');
+	});
+
+	it('accepts a real crypto.randomUUID()', () => {
+		const id = crypto.randomUUID();
+		expect(normalizeStoreId(id)).toBe(id);
+	});
+
+	it('rejects a non-uuid string', () => {
+		expect(normalizeStoreId('not-a-uuid')).toBeNull();
+		expect(normalizeStoreId('11111111-2222-4333-8444-55555555555')).toBeNull(); // one short
+		expect(normalizeStoreId('__registry__')).toBeNull(); // reserved sentinel is not a uuid
+	});
+
+	it('rejects non-string input', () => {
+		expect(normalizeStoreId(undefined)).toBeNull();
+		expect(normalizeStoreId(123)).toBeNull();
+		expect(normalizeStoreId(null)).toBeNull();
+	});
+});
+
+describe('deriveStoreKey', () => {
+	it('uses the example id for an example run', () => {
+		expect(deriveStoreKey({ type: 'example', exampleId: 'feed-watcher' })).toBe('feed-watcher');
+	});
+
+	it('prefixes the code hash for a custom run', () => {
+		expect(deriveStoreKey({ type: 'custom', codeHash: 'abc123' })).toBe('custom:abc123');
+	});
+
+	it('gives different custom code different store keys (edited code = different store)', () => {
+		expect(deriveStoreKey({ type: 'custom', codeHash: 'aaa' })).not.toBe(deriveStoreKey({ type: 'custom', codeHash: 'bbb' }));
+	});
+});
+
+describe('checkStorageWrite', () => {
+	const ok = { keyByteLength: 10, valueByteLength: 100, currentKeyCount: 5, keyAlreadyExists: false, databaseSize: 1000 };
+
+	it('accepts a within-limits write', () => {
+		expect(checkStorageWrite(ok)).toEqual({ ok: true });
+	});
+
+	it('rejects when the database is at/over the hard byte cap (checked first)', () => {
+		const r = checkStorageWrite({ ...ok, databaseSize: STORE_MAX_BYTES });
+		expect(r.ok).toBe(false);
+		if (!r.ok) expect(r.message).toContain('database');
+	});
+
+	it('rejects an over-long key', () => {
+		const r = checkStorageWrite({ ...ok, keyByteLength: STORE_MAX_KEY_BYTES + 1 });
+		expect(r.ok).toBe(false);
+		if (!r.ok) expect(r.message).toContain('key');
+	});
+
+	it('rejects an over-large value', () => {
+		const r = checkStorageWrite({ ...ok, valueByteLength: STORE_MAX_VALUE_BYTES + 1 });
+		expect(r.ok).toBe(false);
+		if (!r.ok) expect(r.message).toContain('value');
+	});
+
+	it('rejects a new key that would exceed the key-count cap', () => {
+		const r = checkStorageWrite({ ...ok, currentKeyCount: STORE_MAX_KEYS, keyAlreadyExists: false });
+		expect(r.ok).toBe(false);
+		if (!r.ok) expect(r.message).toContain('key count');
+	});
+
+	it('allows overwriting an existing key even at the key-count cap', () => {
+		expect(checkStorageWrite({ ...ok, currentKeyCount: STORE_MAX_KEYS, keyAlreadyExists: true })).toEqual({ ok: true });
+	});
+
+	it('checks the hard byte cap before the advisory caps', () => {
+		// Over on both the byte cap and the key length: the byte-cap message wins.
+		const r = checkStorageWrite({ ...ok, databaseSize: STORE_MAX_BYTES, keyByteLength: STORE_MAX_KEY_BYTES + 1 });
+		expect(r.ok).toBe(false);
+		if (!r.ok) expect(r.message).toContain('database');
+	});
+});
+
+describe('selectEvictions', () => {
+	it('returns nothing when at or under the cap', () => {
+		expect(selectEvictions([{ key: 'a', lastUsed: 1 }], 5)).toEqual([]);
+		expect(selectEvictions([], 5)).toEqual([]);
+	});
+
+	it('evicts the oldest entries beyond the cap, oldest first', () => {
+		const entries = [
+			{ key: 'newest', lastUsed: 500 },
+			{ key: 'mid', lastUsed: 300 },
+			{ key: 'oldest', lastUsed: 100 },
+			{ key: 'old', lastUsed: 200 },
+		];
+		// cap 2 → keep the 2 newest (newest, mid); evict old(200) then oldest(100)? oldest-first.
+		expect(selectEvictions(entries, 2)).toEqual(['oldest', 'old']);
+	});
+
+	it('evicts exactly one when one over the cap', () => {
+		const entries = [
+			{ key: 's1', lastUsed: 10 },
+			{ key: 's2', lastUsed: 20 },
+			{ key: 's3', lastUsed: 30 },
+			{ key: 's4', lastUsed: 40 },
+			{ key: 's5', lastUsed: 50 },
+			{ key: 's6', lastUsed: 60 },
+		];
+		expect(selectEvictions(entries, 5)).toEqual(['s1']);
+	});
+
+	it('breaks lastUsed ties on key for determinism', () => {
+		const entries = [
+			{ key: 'b', lastUsed: 100 },
+			{ key: 'a', lastUsed: 100 },
+			{ key: 'c', lastUsed: 100 },
+		];
+		// cap 2: newest-first sort keeps 'a','b' (tie broken by key asc), evicts 'c'.
+		expect(selectEvictions(entries, 2)).toEqual(['c']);
 	});
 });

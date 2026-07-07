@@ -2,10 +2,11 @@ import { fetchTarget } from './runtime/fetch-target';
 import { runInLoader } from './runtime/loader';
 import { transpileUserCode, selectReferencedDeps } from './runtime/transpile';
 import { extractLinkedUrls } from './runtime/extract-urls';
-import { isValidPermissions, validateCustomModules } from './runtime/core';
+import { isValidPermissions, validateCustomModules, normalizeStoreId, deriveStoreKey, hashCode, STORE_REGISTRY_NAME } from './runtime/core';
 import { releaseGateRun, collectGateSpans } from './runtime/capability-gate';
-import { Tracer, type Trace } from './runtime/trace';
-import type { Permissions, RunErrorKind, RunRequestBody, UserWorker } from './runtime/types';
+import { Tracer, type Trace, type GateSpanDraft } from './runtime/trace';
+import type { Permissions, RunErrorKind, RunResult, RunRequestBody, UserWorker } from './runtime/types';
+import type { StorageRunArgs, StorageRunResult } from './runtime/storage-host';
 import { listExamples, getExample, type ExampleModule } from './examples/manifest';
 import { SHARED_DEP_SPECIFIERS } from './examples/registry';
 import { GENERATED_DEP_MODULES } from './examples/deps.generated';
@@ -101,7 +102,7 @@ async function handleRun(request: Request, env: Env, ctx: ExecutionContext): Pro
 		return jsonError(400, 'bad_request', 'Missing required field: url');
 	}
 
-	const { url, worker, turnstileToken, permissions: requestPermissions } = body as Partial<Record<keyof RunRequestBody, unknown>>;
+	const { url, worker, turnstileToken, permissions: requestPermissions, storeId } = body as Partial<Record<keyof RunRequestBody, unknown>>;
 
 	// GATE 1: Rate limit by client IP
 	const clientIp = request.headers.get('CF-Connecting-IP') ?? 'anonymous';
@@ -272,6 +273,18 @@ async function handleRun(request: Request, env: Env, ctx: ExecutionContext): Pro
 		wasmModules = requestWasmModules;
 	}
 
+	// Storage gate: a storage-scoped grant (example's registered permissions for
+	// example runs, request permissions for custom runs) REQUIRES a uuid storeId —
+	// it selects the supervisor DO (idFromName(storeId)). Checked before any fetch
+	// work so a bad request 400s early. Ignored/allowed-absent otherwise.
+	let normalizedStoreId: string | null = null;
+	if (permissions?.storage === 'scoped') {
+		normalizedStoreId = normalizeStoreId(storeId);
+		if (!normalizedStoreId) {
+			return jsonError(400, 'bad_request', 'storeId (a uuid) is required for a storage-scoped run');
+		}
+	}
+
 	// Fetch target URL
 	const targetFetchSpanId = tracer.newSpanId();
 	const targetFetchStartAbsMs = performance.now();
@@ -315,27 +328,85 @@ async function handleRun(request: Request, env: Env, ctx: ExecutionContext): Pro
 				)
 			: undefined;
 
-	// Run code in loader
+	// Run code — either the direct loader path, or (under a storage grant) via the
+	// StorageHost supervisor DO (idFromName(storeId)), which mounts the same worker
+	// as a facet. Non-storage runs keep the direct path byte-for-byte untouched.
+	const storageGranted = permissions?.storage === 'scoped' && normalizedStoreId !== null;
 	const loaderSpanId = tracer.newSpanId();
 	const startTime = performance.now();
-	const result = await runInLoader(env, fetchOutcome.input, code, runId, ctx, {
-		compatDate,
-		extraModules,
-		wasmModules,
-		permissions,
-		allowedUrls,
-	});
+	let result: RunResult;
+	// Gate calls' span drafts. The gate's per-run maps live in the isolate that
+	// built the loopback: handleRun's for the direct path, the StorageHost DO's for
+	// the storage path — so the storage path returns them in its RPC result rather
+	// than us draining collectGateSpans (which would be empty in this isolate).
+	let gateSpanDrafts: GateSpanDraft[];
+	if (storageGranted) {
+		// The DO RPC return (StorageRunResult) carries RunResult.value: unknown,
+		// which fails the generated Serializable<> type-check and collapses the stub
+		// method to `never` — a type-only artifact (the runtime serializes it fine).
+		// Cast the stub to its plain RPC surface. See src/runtime/storage-host.ts.
+		const storeHost = (id: DurableObjectId) =>
+			env.STORAGE_HOST.get(id) as unknown as {
+				run(args: StorageRunArgs): Promise<StorageRunResult>;
+				touchStore(clientIp: string, storeId: string): Promise<string[]>;
+				selfDestruct(): Promise<void>;
+			};
+
+		// Per-IP store cap via the registry singleton (LRU; evictees are torn down).
+		let evicted: string[] = [];
+		try {
+			evicted = await storeHost(env.STORAGE_HOST.idFromName(STORE_REGISTRY_NAME)).touchStore(clientIp, normalizedStoreId!);
+		} catch {
+			// Registry is best-effort abuse accounting; never fail a run over it.
+		}
+		for (const victim of evicted) {
+			try {
+				await storeHost(env.STORAGE_HOST.idFromName(victim)).selfDestruct();
+			} catch {
+				/* best-effort teardown of the LRU-evicted store */
+			}
+		}
+
+		// Facet name = script identity within the supervisor (storeId already picked
+		// the DO). Edited code hashes differently → a distinct store.
+		const storeKey = deriveStoreKey(
+			userWorker.type === 'example' ? { type: 'example', exampleId: userWorker.exampleId } : { type: 'custom', codeHash: await hashCode(code) },
+		);
+		const runOut = await storeHost(env.STORAGE_HOST.idFromName(normalizedStoreId!)).run({
+			input: fetchOutcome.input,
+			code,
+			runId,
+			storeKey,
+			compatDate,
+			extraModules,
+			wasmModules,
+			permissions,
+			allowedUrls,
+		});
+		result = runOut.result;
+		gateSpanDrafts = runOut.gateSpans;
+	} else {
+		result = await runInLoader(env, fetchOutcome.input, code, runId, ctx, {
+			compatDate,
+			extraModules,
+			wasmModules,
+			permissions,
+			allowedUrls,
+		});
+		gateSpanDrafts = collectGateSpans(runId);
+	}
 	const loaderEndAbsMs = performance.now();
 	const timingMs = Math.round(loaderEndAbsMs - startTime);
 	tracer.addSpan(loaderSpanId, rootSpanId, startTime, loaderEndAbsMs, result.type === 'success' ? 'ok' : 'error', {
 		name: 'loader',
+		...(storageGranted ? { storage: true } : {}),
 		...(userWorker.type === 'example' ? { exampleId: userWorker.exampleId } : { custom: true }),
 		...(result.type === 'failure' ? { errorKind: result.error.kind, error: result.error.message } : {}),
 	});
 	// Gate calls (env.fetch/env.fetchFile), including denied attempts, nest
 	// under the loader span — they only ever happen during the loader's
 	// invocation of the transform.
-	tracer.addExternalSpans(collectGateSpans(runId), loaderSpanId);
+	tracer.addExternalSpans(gateSpanDrafts, loaderSpanId);
 
 	// Read logs from LogSession
 	const logsReadSpanId = tracer.newSpanId();
@@ -371,6 +442,7 @@ async function handleRun(request: Request, env: Env, ctx: ExecutionContext): Pro
 export { LogSession } from './runtime/log-session';
 export { LogTailer } from './runtime/log-tailer';
 export { CapabilityGate } from './runtime/capability-gate';
+export { StorageHost } from './runtime/storage-host';
 
 /**
  * Override the Turnstile verifier for testing.

@@ -22,9 +22,20 @@
 	},
 	"ratelimits": [{ "name": "RATE_LIMITER", "namespace_id": "1001", "simple": { "limit": 10, "period": 60 } }],
 	"durable_objects": {
-		"bindings": [{ "name": "LOG_SESSION", "class_name": "LogSession" }],
+		"bindings": [
+			{ "name": "LOG_SESSION", "class_name": "LogSession" },
+			// Supervisor DO for the storage capability (also hosts the per-IP store
+			// registry singleton). See src/runtime/storage-host.ts.
+			{ "name": "STORAGE_HOST", "class_name": "StorageHost" },
+		],
 	},
-	"migrations": [{ "tag": "v1", "new_sqlite_classes": ["LogSession"] }],
+	"migrations": [
+		{ "tag": "v1", "new_sqlite_classes": ["LogSession"] },
+		// Only the supervisor class is declared; the facet class (StorageHarness,
+		// from the loaded worker) is NOT declared here. The v2 tag is reused from
+		// the throwaway spike (nothing was deployed).
+		{ "tag": "v2", "new_sqlite_classes": ["StorageHost"] },
+	],
 	"assets": {
 		"directory": "./public",
 		"binding": "ASSETS",
