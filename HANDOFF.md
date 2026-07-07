@@ -1,5 +1,31 @@
 # Handoff: dynamic-workers-demo
 
+## Session log (2026-07-07, storage-capability session)
+- `3208699` Scoped storage capability via DO facets: `storage: 'scoped'`
+  permission + required uuid `storeId`; StorageHost supervisor DO
+  (idFromName(storeId)) mounts the harness's new StorageHarness DO class as a
+  facet keyed by script identity; env.storage {get,put,delete,list} with the
+  full quota stack (5 MiB databaseSize backstop, 256 B/8 KiB/200-key op caps,
+  8 facets/store LRU, 5 stores/IP registry singleton, 1h sliding
+  self-destruct); buildWorkerCode extracted as the single loaded-worker
+  construction site; gate spans drain inside the DO isolate and return over
+  RPC so traces stay complete. Facets absent in the vitest pool (guard test);
+  facet e2e is wrangler-dev/deploy.
+- `d0fd045` Teardown fix (found live): ctx.facets.delete promises must be
+  AWAITED (floating deletes raced the next mount and let facet data survive a
+  clear), and a THROWN deleteAll wedges the live supervisor instance (every
+  later storage/facet op errors until eviction) — teardown now explicitly
+  deletes all its own kv rows and only calls deleteAll when no facets were
+  deleted. run/run/delete/run round-trips cleanly under wrangler dev.
+- `56b1ef9` feed-watcher example (storage-only grant, "what's new since last
+  run", ~1h retention in the description), DELETE /api/store (uuid-validated,
+  rate-limited, no Turnstile — destroys only the caller's own store), widget
+  storage UX (persistent anonymous storeId in localStorage, 'storage scoped'
+  permissions hint, "Clear stored data" button). Browser-verified end to end.
+- Deploy re-verification still pending (see open items): deleteAll behavior
+  after facets.delete in production, facet semantics on real Workers Paid,
+  cpuMs on the facet path, 1h alarm firing.
+
 ## Session log (2026-07-06, trace-view session)
 - `868ff85` Per-invocation trace capture: every run-shaped `/api/run` response
   now carries `trace: { traceId, totalMs, spans }` (inline only, nothing
