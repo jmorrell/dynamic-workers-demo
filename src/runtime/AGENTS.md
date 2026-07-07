@@ -15,7 +15,10 @@ the target URL, captures the sandbox's logs, and enforces abuse gates.
   opts?) → FetchOutcome`; `verifyTurnstile(...)`; `transpileUserCode(source) →
   TranspileResult`; `extractLinkedUrls(body, contentType, baseUrl) → string[]`;
   DO `LogSession`; tail worker `LogTailer`; loopback gate `CapabilityGate`; types
-  in `types.ts` / `log-types.ts`.
+  in `types.ts` / `log-types.ts`. Tracing: `trace.ts` (`TraceSpan`/`Trace`/
+  `Tracer` — the run response's inline `trace` field) and the gate's
+  `collectGateSpans(runId)` (drains per-call span drafts, incl. denials, for
+  the host to normalize/parent under its loader span).
 - **Transform signature**: the default export is `(env, input) => …`. `env` is a
   capability object (its FIRST argument, mirroring how Workers hand bindings to
   code), `input` is the page snapshot. INPUT is passed PER INVOCATION as the RPC
@@ -162,9 +165,16 @@ the target URL, captures the sandbox's logs, and enforces abuse gates.
   capped at `GATE_MAX_GROWN_URLS` (5000) grown entries per run — a memory bound
   only; the real reachability bound is the granted `maxFetches` (at most that
   many pages can ever contribute grown URLs). `releaseGateRun(runId)` (called
-  from `src/index.ts`'s `handleRun` after logs are read) deletes a run's entries
-  from both the fetch-count and grown-allowlist maps — best-effort hygiene;
-  correctness never depends on it running.
+  from `src/index.ts`'s `handleRun` after logs are read and gate spans are
+  drained) deletes a run's entries from the fetch-count, grown-allowlist, and
+  gate-span maps — best-effort hygiene; correctness never depends on it running.
+- Every gate call (fetchText/fetchFile) records a trace span draft — denials
+  included, as ~0ms error spans with the deny reason — into a module-scoped
+  per-runId map (same fresh-entrypoint-per-RPC reasoning as fetchCounts),
+  using absolute `performance.now()` pairs; the HOST normalizes to run-start
+  when draining via `collectGateSpans`. Recording never changes
+  transform-visible behavior: thrown messages/errors are byte-identical and
+  rethrown unchanged.
 - `guardFetchUrl` (core, pure) blocks non-http(s) and private/loopback/link-local
   IP literals + localhost; used by the gate AND by `fetchTarget` (pre-fetch on
   the requested URL, and again post-fetch on `response.url` if it differs —
@@ -182,6 +192,10 @@ the target URL, captures the sandbox's logs, and enforces abuse gates.
   `clampCpuMs`, `isValidPermissions`, error classifiers
 - `capability-gate.ts` - `CapabilityGate` loopback entrypoint (host-side fetch
   policy for the sandbox); exported from `src/index.ts` for `ctx.exports`
+- `trace.ts` - per-invocation trace types + `Tracer` (span ids, absolute→
+  run-relative normalization); NOT OTel — the bespoke minimal span shape is the
+  contract. workerd advances timers at I/O boundaries, so the waterfall shows
+  I/O shape, not CPU attribution
 - `extract-urls.ts` - pure `extractLinkedUrls` (allowlist derivation from a page)
 - `transpile.ts` - pure: `transpileUserCode` (sucrase TS→JS), `selectReferencedDeps`
 - `fetch-target.ts` - target fetch + RunInput snapshot
