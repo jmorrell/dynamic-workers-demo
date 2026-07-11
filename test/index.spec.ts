@@ -427,6 +427,53 @@ describe('POST /api/run handler', () => {
 		});
 	});
 
+	describe('resultHtml (markdown rendering)', () => {
+		it('a success result shaped like { markdown } gains a rendered resultHtml field', async () => {
+			stubTargetFetch('<html>hi</html>');
+
+			const customCode = "export default (env, input) => ({ markdown: '# hi' })";
+			const request = new IncomingRequest('http://example.com/api/run', {
+				method: 'POST',
+				headers: { 'CF-Connecting-IP': '203.0.113.230' },
+				body: JSON.stringify({
+					worker: { type: 'custom', customCode },
+					url: 'http://example.com/test',
+				}),
+			});
+			const ctx = createExecutionContext();
+			const response = await worker.fetch(request, env, ctx);
+			await waitOnExecutionContext(ctx);
+
+			expect(response.status).toBe(200);
+			const data = await response.json<{ ok: boolean; result?: unknown; resultHtml?: string }>();
+			expect(data.ok).toBe(true);
+			expect(typeof data.resultHtml).toBe('string');
+			expect(data.resultHtml).toContain('<h1>');
+		});
+
+		it('a non-markdown-shaped success result has no resultHtml field', async () => {
+			stubTargetFetch('<html>hi</html>');
+
+			const customCode = 'export default (env, input) => input.status';
+			const request = new IncomingRequest('http://example.com/api/run', {
+				method: 'POST',
+				headers: { 'CF-Connecting-IP': '203.0.113.231' },
+				body: JSON.stringify({
+					worker: { type: 'custom', customCode },
+					url: 'http://example.com/test',
+				}),
+			});
+			const ctx = createExecutionContext();
+			const response = await worker.fetch(request, env, ctx);
+			await waitOnExecutionContext(ctx);
+
+			expect(response.status).toBe(200);
+			const data = await response.json<{ ok: boolean; result?: unknown; resultHtml?: string }>();
+			expect(data.ok).toBe(true);
+			expect(data.resultHtml).toBeUndefined();
+		});
+	});
+
 	describe('capabilities: page-links fetch permission (end-to-end)', () => {
 		afterEach(() => {
 			vi.unstubAllGlobals();

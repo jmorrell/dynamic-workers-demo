@@ -107,6 +107,17 @@ A pristine (unedited) example instead runs by `exampleId`, using its pre-bundled
 `src/runtime/AGENTS.md` for how edited-example imports (`linkedom`,
 `defuddle/node`, the markdown DOM polyfill) get resolved.
 
+## Markdown rendering
+When a run succeeds and its result value is a plain object with a string
+`markdown` property, `/api/run`'s response gains a sibling `resultHtml` field:
+a complete, self-contained HTML document rendered host-side via `micromark`
+(`src/runtime/markdown-html.ts`, `extractMarkdown`/`renderMarkdownDocument`),
+ready to be used as a sandboxed iframe's `srcdoc`. Markdown is truncated to
+`MARKDOWN_RENDER_LIMIT` (256 KiB) before parsing — the run result is otherwise
+uncapped end-to-end, so this is a host-side DoS guard. Security relies on
+micromark's off-by-default `allowDangerousHtml`/`allowDangerousProtocol`
+staying untouched.
+
 ## Local vitest vs deploy gotchas
 The workerd test runtime does NOT reproduce production containment. These are
 deploy-verified only:

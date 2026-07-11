@@ -187,6 +187,7 @@ type RunResponseOk = {
 	readonly timingMs: number;
 	readonly inputTruncated: boolean;
 	readonly trace?: Trace;
+	readonly resultHtml?: string;
 };
 
 type RunResponseError = {

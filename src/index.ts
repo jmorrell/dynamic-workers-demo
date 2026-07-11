@@ -14,6 +14,7 @@ import { LogSession } from './runtime/log-session';
 import { LogTailer } from './runtime/log-tailer';
 import { LOG_MAX_LINES, LOG_MAX_BYTES } from './runtime/log-types';
 import { verifyTurnstile } from './runtime/turnstile';
+import { extractMarkdown, renderMarkdownDocument } from './runtime/markdown-html';
 
 /** Timeout (ms) for reading logs from LogSession after run completes */
 const LOG_READ_TIMEOUT_MS = 500;
@@ -460,6 +461,8 @@ async function handleRun(request: Request, env: Env, ctx: ExecutionContext): Pro
 	// transform_threw/loader_failed run still releases its entries.
 	releaseGateRun(runId);
 
+	const markdown = result.type === 'success' ? extractMarkdown(result.value) : null;
+
 	return new Response(
 		JSON.stringify({
 			ok: result.type === 'success',
@@ -470,6 +473,7 @@ async function handleRun(request: Request, env: Env, ctx: ExecutionContext): Pro
 			timingMs,
 			trace: finishTrace(result.type === 'success' ? 'ok' : 'error'),
 			inputTruncated: fetchOutcome.input.truncated,
+			...(markdown !== null ? { resultHtml: renderMarkdownDocument(markdown) } : {}),
 		}),
 		{ status: 200, headers: { 'content-type': 'application/json' } },
 	);
