@@ -91,24 +91,66 @@ export function buildCustomRunPayload(
 	return { customCode, modules };
 }
 
-// Human-readable one-liner for the static permissions hint under the Code label.
-// Returns null when there's nothing noteworthy to surface (default no-network,
-// no-storage grant). A storage-only grant (fetch: 'none', storage: 'scoped')
-// still renders a hint — the fetch/depth/fetches/cpu segments are gated on a
-// network grant, but the storage segment is independent, so this can't just
-// early-return on `fetch === 'none'` anymore.
-export function formatPermissions(permissions: Permissions | undefined): string | null {
-	if (!permissions) return null;
-	const parts: string[] = [];
-	if (permissions.fetch !== 'none') {
-		parts.push(`fetch ${permissions.fetch}`);
-		if (typeof permissions.fetchDepth === 'number' && permissions.fetchDepth > 1) parts.push(`depth ${permissions.fetchDepth}`);
-		if (typeof permissions.maxFetches === 'number') parts.push(`fetches ${permissions.maxFetches}`);
-		if (typeof permissions.cpuMs === 'number') parts.push(`cpu ${permissions.cpuMs}ms`);
+// One badge in the permissions strip under the Code label: `label` is the
+// visible chip text, `detail` the tooltip explaining what the grant means,
+// `tone` picks the chip color (net = network grant, storage = storage grant,
+// limit = a numeric cap on a grant, none = the fully sandboxed default).
+export type PermissionBadge = {
+	readonly label: string;
+	readonly detail: string;
+	readonly tone: 'net' | 'storage' | 'limit' | 'none';
+};
+
+// Structured badges for the static permissions strip under the Code label.
+// The default grant (no permissions, or nothing beyond fetch/storage 'none')
+// renders an explicit "no network access" badge rather than nothing — the
+// sandbox being locked down is the demo's point, so say so. The depth/fetches/
+// cpu segments are gated on a network grant (they cap env.fetch, which doesn't
+// exist without one); the storage badge is independent.
+export function permissionBadges(permissions: Permissions | undefined): Array<PermissionBadge> {
+	const badges: Array<PermissionBadge> = [];
+	if (permissions?.fetch === 'page-links') {
+		badges.push({
+			label: 'network: page links',
+			detail: 'env.fetch / env.fetchFile may request URLs the fetched page references — no arbitrary hosts.',
+			tone: 'net',
+		});
+		if (typeof permissions.fetchDepth === 'number' && permissions.fetchDepth > 1) {
+			badges.push({
+				label: `link depth ${permissions.fetchDepth}`,
+				detail: `URLs referenced by fetched pages become fetchable too, up to ${permissions.fetchDepth - 1} hop(s) beyond the original page.`,
+				tone: 'limit',
+			});
+		}
+		if (typeof permissions.maxFetches === 'number') {
+			badges.push({
+				label: `max ${permissions.maxFetches} fetches`,
+				detail: `At most ${permissions.maxFetches} env.fetch / env.fetchFile calls per run.`,
+				tone: 'limit',
+			});
+		}
+		if (typeof permissions.cpuMs === 'number') {
+			badges.push({
+				label: `cpu ${permissions.cpuMs}ms`,
+				detail: `The transform is killed after ${permissions.cpuMs}ms of CPU time.`,
+				tone: 'limit',
+			});
+		}
+	} else {
+		badges.push({
+			label: 'no network access',
+			detail: 'The sandbox cannot make any network requests; it only sees the page snapshot the host fetched.',
+			tone: 'none',
+		});
 	}
-	if (permissions.storage === 'scoped') parts.push('storage scoped');
-	if (parts.length === 0) return null;
-	return `permissions: ${parts.join(' · ')}`;
+	if (permissions?.storage === 'scoped') {
+		badges.push({
+			label: 'storage: scoped',
+			detail: 'env.storage — a small per-visitor, per-script key/value store, deleted about an hour after the last run.',
+			tone: 'storage',
+		});
+	}
+	return badges;
 }
 
 // Whether the effective grant requires the widget to send a storeId with the

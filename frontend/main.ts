@@ -3,7 +3,7 @@
 import {
 	formatRunResponse,
 	exampleOptions,
-	formatPermissions,
+	permissionBadges,
 	needsStoreId,
 	exampleTabs,
 	isTabSetDirty,
@@ -272,17 +272,33 @@ function selectTab(tabId: string): void {
 	updateRunButton();
 }
 
-// Static hint reflecting the selected example's capability grant. A dirty custom
-// run inherits these permissions (see onRunClick), so the line stays accurate.
-// The "clear stored data" affordance rides the same permissions object — a
-// dirty/custom run sends the identical grant back to the server (see
-// onRunClick's `inherited` logic), so whether the button is offered stays in
-// sync with whether the run actually carries a storeId.
+// Static badge strip reflecting the selected example's capability grant (hidden
+// when no example is selected). A dirty custom run inherits these permissions
+// (see onRunClick), so the strip stays accurate. The "clear stored data"
+// affordance rides the same permissions object — a dirty/custom run sends the
+// identical grant back to the server (see onRunClick's `inherited` logic), so
+// whether the button is offered stays in sync with whether the run actually
+// carries a storeId. Badge text is our own registry copy, but render via
+// textContent/title anyway, same discipline as the rest of the widget.
 function updatePermissionsHint(): void {
 	const permissions = selectedExample()?.permissions;
-	const line = formatPermissions(permissions);
-	editorPermsEl.textContent = line ?? '';
-	editorPermsEl.style.display = line ? 'block' : 'none';
+
+	editorPermsEl.innerHTML = '';
+	editorPermsEl.style.display = state.selectedExampleId ? 'flex' : 'none';
+	if (state.selectedExampleId) {
+		const caption = document.createElement('span');
+		caption.className = 'perm-caption';
+		caption.textContent = 'Permissions:';
+		editorPermsEl.appendChild(caption);
+
+		for (const badge of permissionBadges(permissions)) {
+			const badgeEl = document.createElement('span');
+			badgeEl.className = `perm-badge perm-badge-${badge.tone}`;
+			badgeEl.textContent = badge.label;
+			badgeEl.title = badge.detail;
+			editorPermsEl.appendChild(badgeEl);
+		}
+	}
 
 	const showClear = needsStoreId(permissions);
 	clearStoreButton.style.display = showClear ? 'inline-block' : 'none';

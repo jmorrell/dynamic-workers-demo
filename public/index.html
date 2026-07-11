@@ -100,9 +100,49 @@
 
 			#editor-perms {
 				display: none;
+				flex-wrap: wrap;
+				align-items: center;
+				gap: 6px;
+				margin-bottom: 6px;
+			}
+
+			.perm-caption {
 				font-size: 12px;
+				font-weight: 600;
 				color: #555;
-				margin-bottom: 4px;
+			}
+
+			.perm-badge {
+				padding: 2px 8px;
+				border-radius: 10px;
+				font-size: 11px;
+				border: 1px solid;
+				cursor: default;
+				white-space: nowrap;
+			}
+
+			.perm-badge-net {
+				background: #e7f1fb;
+				border-color: #9dc3ea;
+				color: #0b4f8f;
+			}
+
+			.perm-badge-storage {
+				background: #eee9fa;
+				border-color: #bbaae5;
+				color: #4b3391;
+			}
+
+			.perm-badge-limit {
+				background: #fdf3e3;
+				border-color: #e4c88f;
+				color: #7a5308;
+			}
+
+			.perm-badge-none {
+				background: #eef4ee;
+				border-color: #a9c8a9;
+				color: #2c5f2c;
 			}
 
 			.storage-row {

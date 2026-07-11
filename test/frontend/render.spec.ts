@@ -4,7 +4,7 @@ import {
 	formatResultValue,
 	formatRunResponse,
 	exampleOptions,
-	formatPermissions,
+	permissionBadges,
 	needsStoreId,
 	exampleTabs,
 	isTabSetDirty,
@@ -311,65 +311,73 @@ describe('render helpers', () => {
 		});
 	});
 
-	describe('formatPermissions', () => {
-		it('returns null for undefined permissions', () => {
-			expect(formatPermissions(undefined)).toBeNull();
+	describe('permissionBadges', () => {
+		// Compact projection so tests read at the label/tone level; `detail`
+		// tooltips are copy, asserted only where the number they embed matters.
+		function labels(badges: ReturnType<typeof permissionBadges>): Array<string> {
+			return badges.map((b) => `${b.tone}:${b.label}`);
+		}
+
+		it('renders the sandboxed-default badge for undefined permissions', () => {
+			expect(labels(permissionBadges(undefined))).toEqual(['none:no network access']);
 		});
 
-		it('returns null for a no-network grant', () => {
-			expect(formatPermissions({ fetch: 'none' })).toBeNull();
+		it('renders the sandboxed-default badge for a no-network grant', () => {
+			expect(labels(permissionBadges({ fetch: 'none' }))).toEqual(['none:no network access']);
 		});
 
-		it('formats a page-links grant', () => {
-			expect(formatPermissions({ fetch: 'page-links' })).toBe('permissions: fetch page-links');
+		it('renders a network badge for a page-links grant', () => {
+			expect(labels(permissionBadges({ fetch: 'page-links' }))).toEqual(['net:network: page links']);
 		});
 
-		it('includes a cpu budget when present', () => {
-			expect(formatPermissions({ fetch: 'page-links', cpuMs: 500 })).toBe('permissions: fetch page-links · cpu 500ms');
+		it('includes a cpu badge when present', () => {
+			expect(labels(permissionBadges({ fetch: 'page-links', cpuMs: 500 }))).toEqual(['net:network: page links', 'limit:cpu 500ms']);
 		});
 
-		it('omits the depth segment when fetchDepth is absent', () => {
-			expect(formatPermissions({ fetch: 'page-links' })).toBe('permissions: fetch page-links');
+		it('omits the depth badge when fetchDepth is 1 (the default)', () => {
+			expect(labels(permissionBadges({ fetch: 'page-links', fetchDepth: 1 }))).toEqual(['net:network: page links']);
 		});
 
-		it('omits the depth segment when fetchDepth is 1 (the default)', () => {
-			expect(formatPermissions({ fetch: 'page-links', fetchDepth: 1 })).toBe('permissions: fetch page-links');
+		it('includes a depth badge when fetchDepth is greater than 1', () => {
+			expect(labels(permissionBadges({ fetch: 'page-links', fetchDepth: 2 }))).toEqual(['net:network: page links', 'limit:link depth 2']);
 		});
 
-		it('includes a depth segment when fetchDepth is greater than 1', () => {
-			expect(formatPermissions({ fetch: 'page-links', fetchDepth: 2 })).toBe('permissions: fetch page-links · depth 2');
+		it('phrases the depth tooltip in hops beyond the original page', () => {
+			const badge = permissionBadges({ fetch: 'page-links', fetchDepth: 3 }).find((b) => b.label === 'link depth 3');
+			expect(badge?.detail).toContain('2 hop(s)');
 		});
 
-		it('orders depth before cpu when both are present', () => {
-			expect(formatPermissions({ fetch: 'page-links', fetchDepth: 2, cpuMs: 500 })).toBe('permissions: fetch page-links · depth 2 · cpu 500ms');
+		it('includes a max-fetches badge when maxFetches is present', () => {
+			expect(labels(permissionBadges({ fetch: 'page-links', maxFetches: 6 }))).toEqual(['net:network: page links', 'limit:max 6 fetches']);
 		});
 
-		it('includes a fetches segment when maxFetches is present', () => {
-			expect(formatPermissions({ fetch: 'page-links', maxFetches: 6 })).toBe('permissions: fetch page-links · fetches 6');
+		it('orders network · depth · fetches · cpu when all are present', () => {
+			expect(labels(permissionBadges({ fetch: 'page-links', fetchDepth: 2, maxFetches: 6, cpuMs: 500 }))).toEqual([
+				'net:network: page links',
+				'limit:link depth 2',
+				'limit:max 6 fetches',
+				'limit:cpu 500ms',
+			]);
 		});
 
-		it('omits the fetches segment when maxFetches is absent', () => {
-			expect(formatPermissions({ fetch: 'page-links', cpuMs: 500 })).toBe('permissions: fetch page-links · cpu 500ms');
+		it('gates the limit badges on a network grant', () => {
+			expect(labels(permissionBadges({ fetch: 'none', cpuMs: 500, maxFetches: 6, fetchDepth: 2 }))).toEqual(['none:no network access']);
 		});
 
-		it('orders fetch · depth · fetches · cpu when all are present', () => {
-			expect(formatPermissions({ fetch: 'page-links', fetchDepth: 2, maxFetches: 6, cpuMs: 500 })).toBe(
-				'permissions: fetch page-links · depth 2 · fetches 6 · cpu 500ms',
-			);
+		it('renders the sandboxed-default badge for a storage: "none" grant alongside no-network', () => {
+			expect(labels(permissionBadges({ fetch: 'none', storage: 'none' }))).toEqual(['none:no network access']);
 		});
 
-		it('returns null for a storage: "none" grant alongside no-network', () => {
-			expect(formatPermissions({ fetch: 'none', storage: 'none' })).toBeNull();
+		it('adds a storage badge alongside the sandboxed default for a storage-only grant', () => {
+			expect(labels(permissionBadges({ fetch: 'none', storage: 'scoped' }))).toEqual(['none:no network access', 'storage:storage: scoped']);
 		});
 
-		it('renders a storage-only hint for a storage-scoped, no-network grant', () => {
-			expect(formatPermissions({ fetch: 'none', storage: 'scoped' })).toBe('permissions: storage scoped');
-		});
-
-		it('appends storage scoped after the fetch segments', () => {
-			expect(formatPermissions({ fetch: 'page-links', cpuMs: 500, storage: 'scoped' })).toBe(
-				'permissions: fetch page-links · cpu 500ms · storage scoped',
-			);
+		it('appends the storage badge after the network badges', () => {
+			expect(labels(permissionBadges({ fetch: 'page-links', cpuMs: 500, storage: 'scoped' }))).toEqual([
+				'net:network: page links',
+				'limit:cpu 500ms',
+				'storage:storage: scoped',
+			]);
 		});
 	});
 
