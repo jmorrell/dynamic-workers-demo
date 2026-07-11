@@ -17,8 +17,8 @@ import { LiteParse, initSync } from '@llamaindex/liteparse-wasm';
 import { parseHTML } from 'linkedom';
 import type { RunInput, TransformEnv } from '../runtime/types';
 
-const MAX_PAGES = 6;
-const MARKDOWN_LIMIT = 6000;
+const MAX_PAGES = 15;
+const MARKDOWN_LIMIT = 60000;
 
 export default async function transform(env: TransformEnv, input: RunInput): Promise<unknown> {
 	const { document } = parseHTML(input.body);
