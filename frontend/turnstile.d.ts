@@ -13,6 +13,7 @@ interface TurnstileWidget {
 		options: {
 			sitekey: string;
 			theme?: 'light' | 'dark';
+			size?: 'normal' | 'flexible' | 'compact';
 			callback?: (token: string) => void;
 			'error-callback'?: () => void;
 		},

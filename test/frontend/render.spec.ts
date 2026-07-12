@@ -11,7 +11,9 @@ import {
 	buildCustomRunPayload,
 	bytesToBase64,
 	buildTraceLayout,
+	tabStripItems,
 	type Example,
+	type EditorTab,
 	type TraceSpan,
 } from '../../frontend/lib/render';
 
@@ -504,6 +506,53 @@ describe('render helpers', () => {
 			];
 			const rows = buildTraceLayout(spans, 100);
 			expect(rows.map((r) => r.label)).toEqual(['run', 'target_fetch', 'loader']);
+		});
+	});
+
+	describe('tabStripItems', () => {
+		const sourceTabs: Array<EditorTab> = [
+			{ id: 'script', label: 'transform.ts', kind: 'script', content: '' },
+			{ id: 'add.wasm', label: 'add.wasm', kind: 'wasm', content: '' },
+		];
+
+		// Compact projection so the assertions read at the id/kind/active level.
+		function shape(items: ReturnType<typeof tabStripItems>): Array<string> {
+			return items.map((i) => `${i.kind}:${i.id}${i.active ? '*' : ''}`);
+		}
+
+		it('renders only the source tabs before any run, active = the active source tab', () => {
+			const items = tabStripItems(sourceTabs, 'script', null, { hasRun: false, hasTrace: false });
+			expect(shape(items)).toEqual(['source:script*', 'source:add.wasm']);
+		});
+
+		it('ignores hasTrace before a run', () => {
+			const items = tabStripItems(sourceTabs, 'script', null, { hasRun: false, hasTrace: true });
+			expect(shape(items)).toEqual(['source:script*', 'source:add.wasm']);
+		});
+
+		it('appends Output and Logs once a run exists, keeping the source tab active', () => {
+			const items = tabStripItems(sourceTabs, 'script', null, { hasRun: true, hasTrace: false });
+			expect(shape(items)).toEqual(['source:script*', 'source:add.wasm', 'result:output', 'result:logs']);
+		});
+
+		it('gates the Trace tab on hasTrace', () => {
+			const items = tabStripItems(sourceTabs, 'script', null, { hasRun: true, hasTrace: true });
+			expect(shape(items)).toEqual(['source:script*', 'source:add.wasm', 'result:output', 'result:logs', 'result:trace']);
+		});
+
+		it('activates the given result tab and leaves every source item inactive', () => {
+			const items = tabStripItems(sourceTabs, 'script', 'output', { hasRun: true, hasTrace: true });
+			expect(shape(items)).toEqual(['source:script', 'source:add.wasm', 'result:output*', 'result:logs', 'result:trace']);
+		});
+
+		it('activates the Trace result tab when it is the active result tab', () => {
+			const items = tabStripItems(sourceTabs, 'add.wasm', 'trace', { hasRun: true, hasTrace: true });
+			expect(shape(items)).toEqual(['source:script', 'source:add.wasm', 'result:output', 'result:logs', 'result:trace*']);
+		});
+
+		it('activates the active source tab (not any result tab) when no result tab is selected', () => {
+			const items = tabStripItems(sourceTabs, 'add.wasm', null, { hasRun: true, hasTrace: true });
+			expect(shape(items)).toEqual(['source:script', 'source:add.wasm*', 'result:output', 'result:logs', 'result:trace']);
 		});
 	});
 });

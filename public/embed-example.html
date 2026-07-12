@@ -44,7 +44,7 @@
 
 		iframe {
 			width: 100%;
-			height: 800px;
+			height: 600px;
 			border: 1px solid #ddd;
 			border-radius: 4px;
 		}
@@ -111,21 +111,21 @@
 					<li>The widget should render above in an iframe (no framing errors)</li>
 					<li>The example dropdown should be populated</li>
 					<li>Click an example and confirm the code appears</li>
-					<li>Click a suggested URL chip and confirm it fills the URL field</li>
-					<li>Click "Run" and confirm results appear</li>
+					<li>Open the URL field's datalist and confirm it offers the example's suggested URLs</li>
+					<li>Click "Run" and confirm the Output tab appears with results</li>
 				</ol>
 			</div>
 
 			<div class="verify-steps">
 				<h3>Verify HTML/Script Escaping (AC6.1)</h3>
 				<ol>
-					<li>In the iframe, switch to "Custom Code" mode</li>
-					<li>Paste this code:
+					<li>In the iframe, edit the code (any edit runs as custom code)</li>
+					<li>Replace it with this code:
 						<pre style="font-size: 11px; background: #f0f0f0; padding: 6px; overflow-x: auto;">export default () => ({
   html: '&lt;script&gt;alert("XSS")&lt;/script&gt;'
 })</pre>
 					</li>
-					<li>Click "Run"</li>
+					<li>Click "Run" and open the Output tab's JSON view</li>
 					<li>Confirm the result shows the text literally, not executing the script</li>
 					<li>No alerts should appear</li>
 					<li>The &lt;script&gt; should appear as inert literal text (rendered via textContent), not executed</li>

@@ -66,6 +66,54 @@ export function bytesToBase64(bytes: Uint8Array): string {
 	return btoa(binary);
 }
 
+// The result panes that appear after a run, in strip order. 'trace' is only
+// present when the run actually carried spans (see tabStripItems).
+export type ResultTabId = 'output' | 'logs' | 'trace';
+
+// One entry in the single unified tab strip: the source-file tabs (the script
+// tab + any wasm module tabs) followed by the result tabs a run produced. `id`
+// is an EditorTab id for a source item, a ResultTabId for a result item; `kind`
+// tells the click handler which selector to call.
+export type TabStripItem = {
+	readonly id: string;
+	readonly label: string;
+	readonly kind: 'source' | 'result';
+	readonly active: boolean;
+};
+
+// Builds the unified strip: every source tab first (in the given order), then —
+// once a run exists — Output and Logs, and Trace only when that run carried
+// spans. Exactly one item is active: the active result tab when one is showing
+// (`activeResultTab` non-null), otherwise the active source tab. So a result
+// tab being active necessarily leaves every source item inactive, and vice versa.
+export function tabStripItems(
+	sourceTabs: ReadonlyArray<EditorTab>,
+	activeSourceTabId: string,
+	activeResultTab: ResultTabId | null,
+	options: { readonly hasRun: boolean; readonly hasTrace: boolean },
+): Array<TabStripItem> {
+	const items: Array<TabStripItem> = sourceTabs.map((tab) => ({
+		id: tab.id,
+		label: tab.label,
+		kind: 'source' as const,
+		active: activeResultTab === null && tab.id === activeSourceTabId,
+	}));
+
+	if (options.hasRun) {
+		const resultTabs: Array<{ id: ResultTabId; label: string }> = [
+			{ id: 'output', label: 'Output' },
+			{ id: 'logs', label: 'Logs' },
+		];
+		if (options.hasTrace) resultTabs.push({ id: 'trace', label: 'Trace' });
+
+		for (const rt of resultTabs) {
+			items.push({ id: rt.id, label: rt.label, kind: 'result', active: activeResultTab === rt.id });
+		}
+	}
+
+	return items;
+}
+
 export type CustomRunModule = { readonly name: string; readonly kind: 'wasm'; readonly base64: string };
 
 // Builds the { customCode, modules? } payload shape for a dirty (or no-example)

@@ -10,11 +10,13 @@ import {
 	buildCustomRunPayload,
 	bytesToBase64,
 	buildTraceLayout,
+	tabStripItems,
 	type RunResponse,
 	type Example,
 	type EditorTab,
 	type CustomRunModule,
 	type Trace,
+	type ResultTabId,
 } from './lib/render';
 import { EditorView, basicSetup } from 'codemirror';
 import { keymap } from '@codemirror/view';
@@ -70,6 +72,11 @@ type State = {
 	// for that one (see currentTabContents()).
 	tabContents: Map<string, string>;
 	activeTabId: string;
+	// The most recent run's response (null before any run), which drives whether
+	// the result tabs appear in the strip and what the result panes render.
+	lastRun: RunResponse | null;
+	// The result pane currently showing (null → the editor/source tab is showing).
+	activeResultTab: ResultTabId | null;
 };
 
 const state: State = {
@@ -82,28 +89,30 @@ const state: State = {
 	pristineTabs: [],
 	tabContents: new Map(),
 	activeTabId: 'script',
+	lastRun: null,
+	activeResultTab: null,
 };
 
 // DOM element references
 const exampleSelect = document.getElementById('example') as HTMLSelectElement;
 const urlInput = document.getElementById('url') as HTMLInputElement;
+const urlDatalistEl = document.getElementById('url-suggestions') as HTMLDataListElement;
 const editorContainer = document.getElementById('editor') as HTMLDivElement;
-const editorTabsEl = document.getElementById('editor-tabs') as HTMLDivElement;
+const tabStripEl = document.getElementById('tab-strip-tabs') as HTMLDivElement;
 const editorStatusEl = document.getElementById('editor-status') as HTMLSpanElement;
 const editorPermsEl = document.getElementById('editor-perms') as HTMLDivElement;
 const editorResetButton = document.getElementById('editor-reset') as HTMLButtonElement;
 const clearStoreButton = document.getElementById('clear-store-button') as HTMLButtonElement;
 const clearStoreStatusEl = document.getElementById('clear-store-status') as HTMLSpanElement;
 const runButton = document.getElementById('run-button') as HTMLButtonElement;
-const resultsSection = document.getElementById('results') as HTMLDivElement;
-const resultsTitleEl = document.getElementById('results-title') as HTMLDivElement;
-const resultsBodyEl = document.getElementById('results-body') as HTMLDivElement;
-const logsContainerEl = document.getElementById('logs-container') as HTMLDivElement;
-const timingInfoEl = document.getElementById('timing-info') as HTMLDivElement;
-const traceContainerEl = document.getElementById('trace-container') as HTMLDivElement;
-const suggestedUrlsSection = document.getElementById('suggested-urls-section') as HTMLDivElement;
-const suggestedUrlsEl = document.getElementById('suggested-urls') as HTMLDivElement;
-const turnstileDiv = document.getElementById('turnstile') as HTMLDivElement;
+const outputPaneEl = document.getElementById('output-pane') as HTMLDivElement;
+const outputJsonEl = document.getElementById('output-json') as HTMLPreElement;
+const outputRenderedEl = document.getElementById('output-rendered') as HTMLIFrameElement;
+const outputToggleEl = document.getElementById('output-toggle') as HTMLDivElement;
+const resultsTitleEl = document.getElementById('results-title') as HTMLSpanElement;
+const logsPaneEl = document.getElementById('logs-pane') as HTMLDivElement;
+const tracePaneEl = document.getElementById('trace-pane') as HTMLDivElement;
+const timingInfoEl = document.getElementById('timing-info') as HTMLSpanElement;
 
 // Switches per-tab editor config (language support) without recreating the
 // EditorView: the script tab keeps TS-aware `javascript()`; a wasm tab (edited
@@ -128,8 +137,7 @@ const editorView = new EditorView({
 		languageCompartment.of(languageExtensionFor('script')),
 		indentUnit.of('\t'),
 		EditorView.theme({
-			'&': { fontSize: '13px' },
-			'.cm-content, .cm-gutter': { minHeight: '260px' },
+			'&': { fontSize: '13px', height: '100%' },
 		}),
 		EditorView.updateListener.of((update) => {
 			if (update.docChanged) {
@@ -230,46 +238,82 @@ function isDirty(): boolean {
 }
 
 function updateEditorStatus(): void {
-	const dirty = isDirty();
-	editorStatusEl.style.display = dirty && state.selectedExampleId ? 'inline' : 'none';
-	editorResetButton.style.display = dirty && state.selectedExampleId ? 'inline-block' : 'none';
+	const show = isDirty() && state.selectedExampleId !== null;
+	editorStatusEl.hidden = !show;
+	editorResetButton.hidden = !show;
 }
 
-// Renders the tab bar buttons and shows/hides the whole bar — hidden whenever
-// there's nothing but the script tab (no example with modules, no custom
-// modules in play).
-function renderTabBar(): void {
-	editorTabsEl.innerHTML = '';
-	editorTabsEl.style.display = state.tabs.length > 1 ? 'flex' : 'none';
+// Renders the single unified strip: source-file tabs followed by the result
+// tabs a run produced (see tabStripItems). Always visible — even with just the
+// script tab, the strip hosts the dirty status / Reset controls beside it.
+function renderTabStrip(): void {
+	tabStripEl.innerHTML = '';
 
-	for (const tab of state.tabs) {
+	const hasRun = state.lastRun !== null;
+	const hasTrace = !!(state.lastRun?.trace && state.lastRun.trace.spans.length > 0);
+	const items = tabStripItems(state.tabs, state.activeTabId, state.activeResultTab, { hasRun, hasTrace });
+
+	for (const item of items) {
 		const button = document.createElement('button');
 		button.type = 'button';
-		button.className = 'editor-tab' + (tab.id === state.activeTabId ? ' active' : '');
-		button.textContent = tab.label;
-		button.addEventListener('click', () => selectTab(tab.id));
-		editorTabsEl.appendChild(button);
+		// The result group is separated from the source group in CSS
+		// (.result-tab:first-of-type { margin-left: auto }), not here.
+		let className = 'editor-tab' + (item.kind === 'result' ? ' result-tab' : '');
+		if (item.active) className += ' active';
+		button.className = className;
+		button.textContent = item.label;
+		button.addEventListener('click', () => (item.kind === 'source' ? selectTab(item.id) : selectResultTab(item.id as ResultTabId)));
+		tabStripEl.appendChild(button);
 	}
 }
 
-// Switches the single CodeMirror doc to a different tab: persists the
-// outgoing tab's live text, reconfigures the language compartment for the
-// incoming tab's kind, then loads its text.
+// Switches the single CodeMirror doc to a source tab (and back off any result
+// pane). Persists the outgoing tab's live text, reconfigures the language
+// compartment for the incoming tab's kind, then loads its text. When the tab is
+// already active and only a result pane was showing, the doc-swap is skipped
+// (its contents are still loaded) — clearing activeResultTab is enough.
 function selectTab(tabId: string): void {
-	if (tabId === state.activeTabId) return;
+	if (tabId === state.activeTabId && state.activeResultTab === null) return;
 
-	state.tabContents.set(state.activeTabId, editorText());
+	state.activeResultTab = null;
 
-	const tab = state.tabs.find((t) => t.id === tabId);
-	if (!tab) return;
+	if (tabId !== state.activeTabId) {
+		state.tabContents.set(state.activeTabId, editorText());
 
-	state.activeTabId = tabId;
-	editorView.dispatch({ effects: languageCompartment.reconfigure(languageExtensionFor(tab.kind)) });
-	setEditorText(state.tabContents.get(tabId) ?? '');
+		const tab = state.tabs.find((t) => t.id === tabId);
+		if (!tab) return;
 
-	renderTabBar();
+		state.activeTabId = tabId;
+		editorView.dispatch({ effects: languageCompartment.reconfigure(languageExtensionFor(tab.kind)) });
+		setEditorText(state.tabContents.get(tabId) ?? '');
+	}
+
+	renderTabStrip();
 	updateEditorStatus();
 	updateRunButton();
+	showActivePane();
+}
+
+// Switches to a result pane without ever touching the editor doc or
+// tabContents — the editor keeps holding the active source tab's live text, so
+// dirty tracking stays correct while a result is on screen.
+function selectResultTab(id: ResultTabId): void {
+	state.activeResultTab = id;
+	renderTabStrip();
+	showActivePane();
+}
+
+// Shows exactly one pane — the editor (activeResultTab null) or one result
+// pane — by toggling `hidden`. Re-measures the editor after unhiding it, since
+// CodeMirror can't size a display:none element.
+function showActivePane(): void {
+	const active = state.activeResultTab;
+	editorContainer.hidden = active !== null;
+	outputPaneEl.hidden = active !== 'output';
+	logsPaneEl.hidden = active !== 'logs';
+	tracePaneEl.hidden = active !== 'trace';
+
+	if (active === null) editorView.requestMeasure();
 }
 
 // Static badge strip reflecting the selected example's capability grant (hidden
@@ -284,7 +328,7 @@ function updatePermissionsHint(): void {
 	const permissions = selectedExample()?.permissions;
 
 	editorPermsEl.innerHTML = '';
-	editorPermsEl.style.display = state.selectedExampleId ? 'flex' : 'none';
+	editorPermsEl.hidden = !state.selectedExampleId;
 	if (state.selectedExampleId) {
 		const caption = document.createElement('span');
 		caption.className = 'perm-caption';
@@ -301,9 +345,9 @@ function updatePermissionsHint(): void {
 	}
 
 	const showClear = needsStoreId(permissions);
-	clearStoreButton.style.display = showClear ? 'inline-block' : 'none';
+	clearStoreButton.hidden = !showClear;
 	clearStoreStatusEl.textContent = '';
-	clearStoreStatusEl.style.display = 'none';
+	clearStoreStatusEl.hidden = true;
 }
 
 // Fire-and-confirm: destroys the current storeId's data for whatever example/
@@ -312,7 +356,7 @@ function updatePermissionsHint(): void {
 // inert textContent status next to the button.
 async function onClearStoreClick(): Promise<void> {
 	clearStoreButton.disabled = true;
-	clearStoreStatusEl.style.display = 'inline';
+	clearStoreStatusEl.hidden = false;
 	clearStoreStatusEl.textContent = 'Clearing…';
 
 	try {
@@ -398,6 +442,7 @@ async function initializeTurnstile(): Promise<void> {
 		// failed challenge marks the widget not-ready rather than failing silently.
 		const widgetId = window.turnstile.render('#turnstile', {
 			sitekey,
+			size: 'flexible',
 			'error-callback': () => {
 				console.warn('Turnstile widget reported an error');
 				state.turnstileReady = false;
@@ -434,19 +479,18 @@ function selectExample(selectedId: string | null): void {
 
 	editorView.dispatch({ effects: languageCompartment.reconfigure(languageExtensionFor('script')) });
 	setEditorText(state.tabContents.get('script') ?? '');
-	renderTabBar();
 
-	if (example) {
-		displaySuggestedUrls(example.suggestedUrls);
+	// Prefill the URL with the example's first suggested URL (empty when none),
+	// and offer the rest as datalist suggestions.
+	populateUrlSuggestions(example?.suggestedUrls ?? []);
+	urlInput.value = example ? (example.suggestedUrls[0] ?? '') : '';
+
+	if (example?.modules?.length) {
 		// Tabs render immediately with '' wasm placeholders; swap in the real
 		// base64 once it loads, as long as this example is still selected.
-		if (example.modules?.length) {
-			ensureModules(example)
-				.then((modules) => applyLoadedModules(example.id, modules))
-				.catch((error) => console.error('Failed to load example modules:', error));
-		}
-	} else {
-		suggestedUrlsSection.style.display = 'none';
+		ensureModules(example)
+			.then((modules) => applyLoadedModules(example.id, modules))
+			.catch((error) => console.error('Failed to load example modules:', error));
 	}
 
 	clearResults();
@@ -455,13 +499,19 @@ function selectExample(selectedId: string | null): void {
 	updateRunButton();
 }
 
+// Resets the result state and clears every result pane, returning the widget to
+// showing the editor. Leaves the tab strip / editor status to their callers.
 function clearResults(): void {
-	resultsSection.className = 'empty';
+	state.lastRun = null;
+	state.activeResultTab = null;
+	outputPaneEl.className = 'pane';
 	resultsTitleEl.textContent = '';
-	resultsBodyEl.innerHTML = '';
-	logsContainerEl.innerHTML = '';
-	timingInfoEl.innerHTML = '';
-	traceContainerEl.innerHTML = '';
+	outputJsonEl.textContent = '';
+	logsPaneEl.innerHTML = '';
+	tracePaneEl.innerHTML = '';
+	timingInfoEl.textContent = '';
+	renderTabStrip();
+	showActivePane();
 }
 
 // Restores every tab (not just the active one) to its pristine content.
@@ -474,27 +524,15 @@ function onResetClick(): void {
 	updateRunButton();
 }
 
-function displaySuggestedUrls(urls: ReadonlyArray<string>): void {
-	suggestedUrlsEl.innerHTML = '';
-
-	if (urls.length === 0) {
-		suggestedUrlsSection.style.display = 'none';
-		return;
-	}
-
-	suggestedUrlsSection.style.display = 'block';
-
+// Fills the URL field's <datalist> with the example's suggested URLs so they're
+// offered as autocomplete options (the field itself is prefilled with the first
+// one in selectExample).
+function populateUrlSuggestions(urls: ReadonlyArray<string>): void {
+	urlDatalistEl.innerHTML = '';
 	for (const url of urls) {
-		const chip = document.createElement('button');
-		chip.className = 'chip';
-		chip.type = 'button';
-		chip.textContent = url;
-		chip.addEventListener('click', (e) => {
-			e.preventDefault();
-			urlInput.value = url;
-			updateRunButton();
-		});
-		suggestedUrlsEl.appendChild(chip);
+		const option = document.createElement('option');
+		option.value = url;
+		urlDatalistEl.appendChild(option);
 	}
 }
 
@@ -526,13 +564,7 @@ async function onRunClick(): Promise<void> {
 				const modules = await ensureModules(runExample);
 				applyLoadedModules(runExample.id, modules);
 			} catch (error) {
-				resultsSection.className = 'error';
-				resultsTitleEl.textContent = 'Error';
-				resultsBodyEl.textContent = `Failed to load example modules: ${String(error)}`;
-				logsContainerEl.innerHTML = '';
-				timingInfoEl.innerHTML = '';
-				traceContainerEl.innerHTML = '';
-				resultsSection.classList.remove('empty');
+				showRunError('module_load_failed', `Failed to load example modules: ${String(error)}`);
 				state.isRunning = false;
 				updateRunButton();
 				return;
@@ -572,14 +604,7 @@ async function onRunClick(): Promise<void> {
 		});
 
 		if (!response.ok) {
-			resultsSection.className = 'error';
-			resultsTitleEl.textContent = 'Error';
-			// textContent renders the string literally (inert) — no escaping needed.
-			resultsBodyEl.textContent = `HTTP ${response.status}: ${response.statusText}`;
-			logsContainerEl.innerHTML = '';
-			timingInfoEl.innerHTML = '';
-			traceContainerEl.innerHTML = '';
-			resultsSection.classList.remove('empty');
+			showRunError('http_error', `HTTP ${response.status}: ${response.statusText}`);
 			state.isRunning = false;
 			updateRunButton();
 			return;
@@ -593,91 +618,82 @@ async function onRunClick(): Promise<void> {
 			window.turnstile.reset(state.turnstileWidgetId);
 		}
 	} catch (error) {
-		resultsSection.className = 'error';
-		resultsTitleEl.textContent = 'Error';
-		resultsBodyEl.textContent = `Network error: ${String(error)}`;
-		logsContainerEl.innerHTML = '';
-		timingInfoEl.innerHTML = '';
-		traceContainerEl.innerHTML = '';
-		resultsSection.classList.remove('empty');
+		showRunError('network_error', `Network error: ${String(error)}`);
 	}
 
 	state.isRunning = false;
 	updateRunButton();
 }
 
+// Builds a minimal error-shaped RunResponse for a client-side failure (module
+// load, non-ok HTTP, network catch) and renders it through the same result
+// panes a real run uses, so all three error paths behave identically.
+function showRunError(kind: string, message: string): void {
+	renderResults({ ok: false, error: { kind, message }, logs: [], logsTruncated: false, timingMs: 0, inputTruncated: false });
+}
+
+// Fills the Output / Logs / Trace panes from a run response and focuses the
+// Output tab. Which result tabs actually appear is driven by state.lastRun (see
+// renderTabStrip / tabStripItems).
 function renderResults(data: RunResponse): void {
+	state.lastRun = data;
+
+	// Output pane: title + tone class, and the formatted value/error into the
+	// JSON view via textContent — the security boundary that makes any HTML/script
+	// in run output inert (AC6.1). Never innerHTML with run data.
 	const formatted = formatRunResponse(data);
-
-	resultsSection.className = formatted.tone;
+	outputPaneEl.className = `pane ${formatted.tone}`;
 	resultsTitleEl.textContent = formatted.title;
-	resultsBodyEl.innerHTML = '';
+	outputJsonEl.textContent = formatted.body;
 
-	// Render the value/error via textContent — the security boundary that makes
-	// any HTML/script in run output inert (AC6.1). Never innerHTML with run data.
-	const bodyPre = document.createElement('pre');
-	bodyPre.textContent = formatted.body;
-	resultsBodyEl.appendChild(bodyPre);
-
-	// Logs
-	logsContainerEl.innerHTML = '';
+	// Logs pane.
+	logsPaneEl.innerHTML = '';
 	if (data.logs.length > 0) {
-		const logsLabel = document.createElement('strong');
-		logsLabel.textContent = 'Logs:';
-		logsContainerEl.appendChild(logsLabel);
-
 		for (const log of data.logs) {
 			const logLine = document.createElement('div');
 			logLine.style.color = log.level === 'error' ? '#c00' : log.level === 'warn' ? '#d70' : '#666';
 			logLine.textContent = `[${log.level}] ${log.message}`;
-			logsContainerEl.appendChild(logLine);
+			logsPaneEl.appendChild(logLine);
 		}
+	} else {
+		const empty = document.createElement('div');
+		empty.className = 'logs-empty';
+		empty.textContent = 'No logs';
+		logsPaneEl.appendChild(empty);
 	}
 
 	if (data.logsTruncated) {
 		const truncated = document.createElement('div');
 		truncated.className = 'logs-truncated';
 		truncated.textContent = 'Logs were truncated';
-		logsContainerEl.appendChild(truncated);
+		logsPaneEl.appendChild(truncated);
 	}
 
 	if (data.inputTruncated) {
 		const inputTruncatedWarning = document.createElement('div');
 		inputTruncatedWarning.className = 'logs-truncated';
 		inputTruncatedWarning.textContent = '⚠ Fetched page exceeded the 2 MiB cap and was truncated before the transform ran.';
-		logsContainerEl.appendChild(inputTruncatedWarning);
+		logsPaneEl.appendChild(inputTruncatedWarning);
 	}
 
-	// Timing info
-	timingInfoEl.innerHTML = '';
-	if (typeof data.timingMs === 'number') {
-		const timing = document.createElement('div');
-		timing.className = 'timing';
-		timing.textContent = `Execution time: ${data.timingMs}ms`;
-		timingInfoEl.appendChild(timing);
-	}
-
+	// Trace pane.
 	renderTrace(data.trace);
 
-	resultsSection.classList.remove('empty');
+	// Timing → footer.
+	timingInfoEl.textContent = typeof data.timingMs === 'number' ? `Execution time: ${data.timingMs}ms` : '';
+
+	selectResultTab('output');
 }
 
-// Renders the collapsible waterfall trace section, or nothing when the
-// response has no trace/spans (e.g. an older-shaped response). Closed by
-// default. All text goes through textContent/title — attrs (urls, error
-// messages) are untrusted, same discipline as the rest of renderResults.
+// Renders the waterfall trace rows straight into the trace pane, or nothing
+// when the response has no trace/spans (e.g. an older-shaped response). All text
+// goes through textContent/title — attrs (urls, error messages) are untrusted,
+// same discipline as the rest of renderResults.
 function renderTrace(trace: Trace | undefined): void {
-	traceContainerEl.innerHTML = '';
+	tracePaneEl.innerHTML = '';
 	if (!trace || trace.spans.length === 0) return;
 
 	const rows = buildTraceLayout(trace.spans, trace.totalMs);
-
-	const details = document.createElement('details');
-	details.className = 'trace-details';
-
-	const summary = document.createElement('summary');
-	summary.textContent = `Trace (${trace.spans.length} spans, ${trace.totalMs}ms)`;
-	details.appendChild(summary);
 
 	const rowsContainer = document.createElement('div');
 	rowsContainer.className = 'trace-rows';
@@ -706,6 +722,5 @@ function renderTrace(trace: Trace | undefined): void {
 		rowsContainer.appendChild(rowEl);
 	}
 
-	details.appendChild(rowsContainer);
-	traceContainerEl.appendChild(details);
+	tracePaneEl.appendChild(rowsContainer);
 }
