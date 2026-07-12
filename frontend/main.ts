@@ -77,6 +77,8 @@ type State = {
 	lastRun: RunResponse | null;
 	// The result pane currently showing (null → the editor/source tab is showing).
 	activeResultTab: ResultTabId | null;
+	// Output view mode: whether showing the rendered HTML or JSON representation.
+	outputView: 'rendered' | 'json';
 };
 
 const state: State = {
@@ -91,6 +93,7 @@ const state: State = {
 	activeTabId: 'script',
 	lastRun: null,
 	activeResultTab: null,
+	outputView: 'json',
 };
 
 // DOM element references
@@ -109,6 +112,8 @@ const outputPaneEl = document.getElementById('output-pane') as HTMLDivElement;
 const outputJsonEl = document.getElementById('output-json') as HTMLPreElement;
 const outputRenderedEl = document.getElementById('output-rendered') as HTMLIFrameElement;
 const outputToggleEl = document.getElementById('output-toggle') as HTMLDivElement;
+const outputToggleRenderedBtn = outputToggleEl.querySelector('[data-view="rendered"]') as HTMLButtonElement;
+const outputToggleJsonBtn = outputToggleEl.querySelector('[data-view="json"]') as HTMLButtonElement;
 const resultsTitleEl = document.getElementById('results-title') as HTMLSpanElement;
 const logsPaneEl = document.getElementById('logs-pane') as HTMLDivElement;
 const tracePaneEl = document.getElementById('trace-pane') as HTMLDivElement;
@@ -122,6 +127,16 @@ const languageCompartment = new Compartment();
 
 function languageExtensionFor(kind: EditorTab['kind']): Extension[] {
 	return kind === 'script' ? [javascript({ typescript: true })] : [EditorView.lineWrapping];
+}
+
+// Toggles which output view shows (rendered HTML or JSON) and updates button states.
+function renderOutputView(): void {
+	outputRenderedEl.hidden = state.outputView !== 'rendered';
+	outputJsonEl.hidden = state.outputView !== 'json';
+
+	// Set active class on the toggle button matching the current view.
+	outputToggleRenderedBtn.classList.toggle('active', state.outputView === 'rendered');
+	outputToggleJsonBtn.classList.toggle('active', state.outputView === 'json');
 }
 
 // Single always-editable CodeMirror instance shared by every tab. Pristine
@@ -462,6 +477,16 @@ function setupEventListeners(): void {
 	runButton.addEventListener('click', onRunClick);
 	urlInput.addEventListener('input', updateRunButton);
 	clearStoreButton.addEventListener('click', onClearStoreClick);
+
+	// Wire output view toggle buttons.
+	outputToggleRenderedBtn.addEventListener('click', () => {
+		state.outputView = 'rendered';
+		renderOutputView();
+	});
+	outputToggleJsonBtn.addEventListener('click', () => {
+		state.outputView = 'json';
+		renderOutputView();
+	});
 }
 
 function selectExample(selectedId: string | null): void {
@@ -507,9 +532,13 @@ function clearResults(): void {
 	outputPaneEl.className = 'pane';
 	resultsTitleEl.textContent = '';
 	outputJsonEl.textContent = '';
+	outputRenderedEl.removeAttribute('srcdoc');
+	outputToggleEl.hidden = true;
+	state.outputView = 'json';
 	logsPaneEl.innerHTML = '';
 	tracePaneEl.innerHTML = '';
 	timingInfoEl.textContent = '';
+	renderOutputView();
 	renderTabStrip();
 	showActivePane();
 }
@@ -645,6 +674,18 @@ function renderResults(data: RunResponse): void {
 	outputPaneEl.className = `pane ${formatted.tone}`;
 	resultsTitleEl.textContent = formatted.title;
 	outputJsonEl.textContent = formatted.body;
+
+	// Handle rendered HTML output if available; server-rendered HTML in a sandboxed iframe.
+	if (data.ok && typeof data.resultHtml === 'string') {
+		outputRenderedEl.srcdoc = data.resultHtml;
+		state.outputView = 'rendered';
+		outputToggleEl.hidden = false;
+	} else {
+		outputRenderedEl.removeAttribute('srcdoc');
+		state.outputView = 'json';
+		outputToggleEl.hidden = true;
+	}
+	renderOutputView();
 
 	// Logs pane.
 	logsPaneEl.innerHTML = '';
