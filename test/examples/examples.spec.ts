@@ -290,19 +290,25 @@ describe('Example transforms through loader (AC2.1–AC2.5)', () => {
 
 			expect(result.type).toBe('success');
 			if (result.type === 'success') {
-				const output = result.value as Array<Record<string, unknown>>;
-				expect(Array.isArray(output)).toBe(true);
-				expect(output.length).toBeGreaterThan(0);
+				const output = result.value as { markdown: string; comments: Array<Record<string, unknown>> };
+				expect(Array.isArray(output.comments)).toBe(true);
+				expect(output.comments.length).toBeGreaterThan(0);
 				// Should include comments from various nesting levels
 				// and be sorted by points descending
-				const points = output.map((c) => (c.points as number | null) ?? -Infinity);
+				const points = output.comments.map((c) => (c.points as number | null) ?? -Infinity);
 				for (let i = 0; i < points.length - 1; i++) {
 					expect(points[i] >= points[i + 1]).toBe(true);
 				}
 				// Verify we have extracted from nested children
-				const authors = output.map((c) => c.author);
+				const authors = output.comments.map((c) => c.author);
 				expect(authors).toContain('user_alice');
 				expect(authors).toContain('user_bob');
+
+				// The rendered markdown summary should include a fixture author and
+				// have HTML entities/tags stripped (HN comment text is HTML).
+				expect(typeof output.markdown).toBe('string');
+				expect(output.markdown).toMatch(/user_alice|user_bob/);
+				expect(output.markdown).not.toContain('<p>');
 			}
 		});
 	});

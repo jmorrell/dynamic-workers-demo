@@ -62,6 +62,7 @@ describe('opengraph example', () => {
 
 describe('hackernews example', () => {
 	type HnComment = { author: string; points: number | null; text: string };
+	type HnResult = { markdown: string; comments: HnComment[] };
 
 	it('extracts top comments from Algolia item recursively', () => {
 		const json = JSON.stringify({
@@ -79,12 +80,13 @@ describe('hackernews example', () => {
 			],
 		});
 
-		const result = hackernews({}, runInput(json, HN_URL)) as HnComment[];
-		expect(result).toHaveLength(4);
-		expect(result[0].author).toBe('alice');
-		expect(result[0].points).toBe(42);
-		expect(result[1].author).toBe('bob');
-		expect(result[1].points).toBe(23);
+		const result = hackernews({}, runInput(json, HN_URL)) as HnResult;
+		expect(result.comments).toHaveLength(4);
+		expect(result.comments[0].author).toBe('alice');
+		expect(result.comments[0].points).toBe(42);
+		expect(result.comments[1].author).toBe('bob');
+		expect(result.comments[1].points).toBe(23);
+		expect(typeof result.markdown).toBe('string');
 	});
 
 	it('caps results at the default limit of 10', () => {
@@ -95,8 +97,8 @@ describe('hackernews example', () => {
 		}));
 		const json = JSON.stringify({ children });
 
-		const result = hackernews({}, runInput(json, HN_URL)) as HnComment[];
-		expect(result).toHaveLength(10);
+		const result = hackernews({}, runInput(json, HN_URL)) as HnResult;
+		expect(result.comments).toHaveLength(10);
 	});
 
 	it('throws when the URL is not the HN Algolia API', () => {
@@ -126,11 +128,11 @@ describe('hackernews example', () => {
 			],
 		});
 
-		const result = hackernews({}, runInput(json, HN_URL)) as HnComment[];
-		expect(result).toHaveLength(3);
-		expect(result[0].points).toBe(100);
-		expect(result[1].points).toBe(50);
-		expect(result[2].points).toBe(null);
+		const result = hackernews({}, runInput(json, HN_URL)) as HnResult;
+		expect(result.comments).toHaveLength(3);
+		expect(result.comments[0].points).toBe(100);
+		expect(result.comments[1].points).toBe(50);
+		expect(result.comments[2].points).toBe(null);
 	});
 
 	it('skips entries without text', () => {
@@ -142,10 +144,10 @@ describe('hackernews example', () => {
 			],
 		});
 
-		const result = hackernews({}, runInput(json, HN_URL)) as HnComment[];
-		expect(result).toHaveLength(2);
-		expect(result[0].author).toBe('user1');
-		expect(result[1].author).toBe('user3');
+		const result = hackernews({}, runInput(json, HN_URL)) as HnResult;
+		expect(result.comments).toHaveLength(2);
+		expect(result.comments[0].author).toBe('user1');
+		expect(result.comments[1].author).toBe('user3');
 	});
 });
 

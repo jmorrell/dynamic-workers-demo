@@ -29,6 +29,12 @@ import type { RunInput, TransformEnv } from '../runtime/types';
 
 const MAX_ITEMS = 6;
 const MARKDOWN_LIMIT = 1200;
+const EXCERPT_LIMIT = 300;
+
+function excerpt(markdown: string): string {
+	const trimmed = markdown.trim();
+	return trimmed.length > EXCERPT_LIMIT ? `${trimmed.slice(0, EXCERPT_LIMIT)}…` : trimmed;
+}
 
 function stripCdata(value: string): string {
 	const match = value.match(/^\s*<!\[CDATA\[([\s\S]*?)\]\]>\s*$/);
@@ -125,5 +131,20 @@ export default async function transform(env: TransformEnv, input: RunInput): Pro
 
 	const items = await Promise.all(candidates.map((item) => digestItem(env, item)));
 
-	return { feedTitle, itemCount: items.length, items };
+	const markdown = [
+		`# ${feedTitle ?? 'Feed digest'}`,
+		...items.map((item) => {
+			const { title, url, markdown: itemMarkdown, error } = item as {
+				title: string | null;
+				url: string;
+				markdown?: string;
+				error?: string;
+			};
+			const heading = `## [${title ?? url}](${url})`;
+			const body = typeof itemMarkdown === 'string' ? excerpt(itemMarkdown) : `_Error: ${error}_`;
+			return `${heading}\n\n${body}`;
+		}),
+	].join('\n\n');
+
+	return { markdown, feedTitle, itemCount: items.length, items };
 }

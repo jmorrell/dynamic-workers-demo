@@ -2,6 +2,26 @@
 
 import type { RunInput, TransformEnv } from '../runtime/types';
 
+// HN comment `text` fields are HTML fragments (<p>, <i>, &#x27; entities, …).
+// Strip tags and decode the common entities so the markdown summary reads as
+// plain text instead of showing escaped markup.
+function stripHtml(s: string): string {
+	return s
+		.replace(/<\/p>/gi, '\n\n')
+		.replace(/<br\s*\/?>/gi, '\n')
+		.replace(/<[^>]+>/g, '')
+		.replace(/&amp;/g, '&')
+		.replace(/&lt;/g, '<')
+		.replace(/&gt;/g, '>')
+		.replace(/&quot;/g, '"')
+		.replace(/&#x27;|&#39;/g, "'")
+		.replace(/&#x2F;|&#47;/g, '/')
+		.replace(/&#(\d+);/g, (_, code) => String.fromCharCode(Number(code)))
+		.replace(/[ \t]+/g, ' ')
+		.replace(/\n{3,}/g, '\n\n')
+		.trim();
+}
+
 export default function transform(env: TransformEnv, input: RunInput): unknown {
 	const limit = 10;
 
@@ -81,5 +101,20 @@ export default function transform(env: TransformEnv, input: RunInput): unknown {
 		return b.points - a.points;
 	});
 
-	return comments.slice(0, limit);
+	const topComments = comments.slice(0, limit);
+
+	const storyTitle = (data as Record<string, unknown>).title;
+	const heading = typeof storyTitle === 'string' && storyTitle.length > 0
+		? `# Top Hacker News comments on "${storyTitle}"`
+		: '# Top Hacker News comments';
+
+	const markdown = [
+		heading,
+		...topComments.map((comment) => {
+			const pointsLabel = comment.points === null ? '' : ` (${comment.points} points)`;
+			return `### ${comment.author}${pointsLabel}\n\n${stripHtml(comment.text)}`;
+		}),
+	].join('\n\n');
+
+	return { markdown, comments: topComments };
 }
