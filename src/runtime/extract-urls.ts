@@ -1,4 +1,5 @@
 import { parseHTML } from 'linkedom';
+import type { ResourceDescriptor, ResourceSource } from './types';
 
 /** Cap on how many distinct linked URLs a page can contribute to the allowlist. */
 const MAX_URLS = 2000;
@@ -6,27 +7,27 @@ const MAX_URLS = 2000;
 const HTML_CONTENT_TYPES = ['text/html', 'application/xhtml+xml'];
 
 /**
- * Extracts the URLs referenced by a fetched page, forming the exact allowlist the
- * CapabilityGate enforces `env.fetch`/`env.fetchFile` against. Pure: no I/O.
+ * Extracts resources referenced by a fetched page. The host later mints an
+ * opaque capability id for each descriptor. Pure: no I/O.
  *
  * HTML is parsed (linkedom, host-side) and URL-bearing attributes are collected;
  * JSON/other text is scanned for absolute http(s) URLs (including JSON-escaped
  * `https:\/\/...` forms). All results are resolved against `baseUrl`, restricted
  * to http/https, normalized via `URL.toString()`, deduped, and capped.
  */
-export function extractLinkedUrls(body: string, contentType: string, baseUrl: string): ReadonlyArray<string> {
+export function extractLinkedResources(body: string, contentType: string, baseUrl: string): ReadonlyArray<ResourceDescriptor> {
 	const type = contentType.split(';')[0].trim().toLowerCase();
 	const raw = HTML_CONTENT_TYPES.includes(type) ? extractFromHtml(body) : extractFromText(body);
 
-	const seen = new Set<string>();
+	const seen = new Map<string, ResourceDescriptor>();
 	for (const candidate of raw) {
-		const normalized = normalize(candidate, baseUrl);
+		const normalized = normalize(candidate.url, baseUrl);
 		if (normalized) {
-			seen.add(normalized);
+			if (!seen.has(normalized)) seen.set(normalized, { url: normalized, source: candidate.source });
 			if (seen.size >= MAX_URLS) break;
 		}
 	}
-	return [...seen];
+	return [...seen.values()];
 }
 
 function normalize(rawUrl: string, baseUrl: string): string | null {
@@ -46,8 +47,10 @@ function normalize(rawUrl: string, baseUrl: string): string | null {
 	return url.toString();
 }
 
-function extractFromHtml(body: string): string[] {
-	const out: string[] = [];
+type RawResource = { url: string; source: ResourceSource };
+
+function extractFromHtml(body: string): RawResource[] {
+	const out: RawResource[] = [];
 	// linkedom's Document type (no DOM lib in this tsconfig); inferred, not annotated.
 	let document: ReturnType<typeof parseHTML>['document'];
 	try {
@@ -56,30 +59,32 @@ function extractFromHtml(body: string): string[] {
 		return out;
 	}
 
-	const single = (selector: string, attr: string) => {
+	const single = (selector: string, element: string, attr: string) => {
 		for (const el of document.querySelectorAll(selector)) {
 			const value = el.getAttribute(attr);
-			if (value) out.push(value.trim());
+			if (value) out.push({ url: value.trim(), source: { kind: 'html', element, attribute: attr } });
 		}
 	};
-	const srcset = (selector: string) => {
+	const srcset = (selector: string, element: string) => {
 		for (const el of document.querySelectorAll(selector)) {
 			const value = el.getAttribute('srcset');
-			if (value) out.push(...parseSrcset(value));
+			if (value) {
+				out.push(...parseSrcset(value).map((url) => ({ url, source: { kind: 'html', element, attribute: 'srcset' } as const })));
+			}
 		}
 	};
 
-	single('a[href]', 'href');
-	single('link[href]', 'href');
-	single('img[src]', 'src');
-	srcset('img[srcset]');
-	single('source[src]', 'src');
-	srcset('source[srcset]');
-	single('script[src]', 'src');
-	single('iframe[src]', 'src');
-	single('video[src]', 'src');
-	single('video[poster]', 'poster');
-	single('audio[src]', 'src');
+	single('a[href]', 'a', 'href');
+	single('link[href]', 'link', 'href');
+	single('img[src]', 'img', 'src');
+	srcset('img[srcset]', 'img');
+	single('source[src]', 'source', 'src');
+	srcset('source[srcset]', 'source');
+	single('script[src]', 'script', 'src');
+	single('iframe[src]', 'iframe', 'src');
+	single('video[src]', 'video', 'src');
+	single('video[poster]', 'video', 'poster');
+	single('audio[src]', 'audio', 'src');
 
 	// meta[content] only when the content itself parses as an absolute URL.
 	for (const el of document.querySelectorAll('meta[content]')) {
@@ -87,7 +92,9 @@ function extractFromHtml(body: string): string[] {
 		if (!value) continue;
 		try {
 			const parsed = new URL(value.trim());
-			if (parsed.protocol === 'http:' || parsed.protocol === 'https:') out.push(value.trim());
+			if (parsed.protocol === 'http:' || parsed.protocol === 'https:') {
+				out.push({ url: value.trim(), source: { kind: 'html', element: 'meta', attribute: 'content' } });
+			}
 		} catch {
 			// Not an absolute URL; skip.
 		}
@@ -110,10 +117,10 @@ function parseSrcset(srcset: string): string[] {
 // structural JSON/HTML delimiters.
 const URL_REGEX = /https?:\/\/[^\s"'\\<>)}\]]+/gi;
 
-function extractFromText(body: string): string[] {
+function extractFromText(body: string): RawResource[] {
 	const unescaped = body.replace(/\\\//g, '/');
 	const matches = unescaped.match(URL_REGEX);
 	if (!matches) return [];
 	// Trim trailing punctuation that commonly abuts a URL in prose/JSON.
-	return matches.map((m) => m.replace(/[.,;:]+$/, ''));
+	return matches.map((m) => ({ url: m.replace(/[.,;:]+$/, ''), source: { kind: 'text' } }));
 }

@@ -1,10 +1,11 @@
 import { describe, it, expect } from 'vitest';
 import { EXAMPLES, listExamples, getExample } from '../../src/examples/manifest';
+import { ASSET_PREFIX } from '../../src/paths';
 
 describe('manifest', () => {
 	describe('EXAMPLES', () => {
-		it('contains all twelve examples', () => {
-			expect(EXAMPLES).toHaveLength(12);
+		it('contains all thirteen examples', () => {
+			expect(EXAMPLES).toHaveLength(13);
 		});
 
 		it('has required ids', () => {
@@ -19,8 +20,9 @@ describe('manifest', () => {
 			expect(ids).toContain('image-hash');
 			expect(ids).toContain('github-repo');
 			expect(ids).toContain('arxiv-pdf');
-			expect(ids).toContain('feed-watcher');
+			expect(ids).toContain('url-history');
 			expect(ids).toContain('arxiv-digest');
+			expect(ids).toContain('write-your-own');
 		});
 
 		it('each example has non-empty code string', () => {
@@ -42,7 +44,7 @@ describe('manifest', () => {
 	describe('listExamples()', () => {
 		it('returns all examples without code field', () => {
 			const examples = listExamples();
-			expect(examples).toHaveLength(12);
+			expect(examples).toHaveLength(13);
 
 			for (const example of examples) {
 				expect('code' in example).toBe(false);
@@ -59,7 +61,27 @@ describe('manifest', () => {
 			const wasmAdd = examples.find((e) => e.id === 'wasm-add');
 			expect(wasmAdd).toBeDefined();
 			expect(wasmAdd?.modules).toHaveLength(1);
-			expect(wasmAdd?.modules?.[0]).toEqual({ name: 'add.wasm', kind: 'wasm', assetPath: '/modules/wasm-add/add.wasm' });
+			expect(wasmAdd?.modules?.[0]).toEqual(
+				expect.objectContaining({
+					name: 'add.wasm',
+					kind: 'wasm',
+					assetPath: `${ASSET_PREFIX}/modules/wasm-add/add.wasm`,
+					byteSize: 41,
+				}),
+			);
+			expect(wasmAdd?.modules?.[0]?.previewBase64).toHaveLength(56);
+		});
+
+		it('includes the markdown DOM polyfill as a source tab', () => {
+			const markdown = listExamples().find((e) => e.id === 'markdown');
+			expect(markdown?.modules?.[0]).toEqual(
+				expect.objectContaining({
+					name: 'markdown-dom-polyfill',
+					label: 'markdown-dom-polyfill.ts',
+					kind: 'js',
+				}),
+			);
+			expect(markdown?.modules?.[0]?.source).toContain("import { parseHTML, DOMParser } from 'linkedom';");
 		});
 
 		it('dedupes identical module binaries shared across examples (arxiv-digest reuses arxiv-pdf\'s liteparse.wasm asset)', () => {
@@ -70,18 +92,32 @@ describe('manifest', () => {
 			expect(arxivDigest?.modules?.[0]?.assetPath).toBe(arxivPdf?.modules?.[0]?.assetPath);
 		});
 
-		it('never includes module base64 for any listed example (bytes are static assets)', () => {
+		it('includes only a 1.5 KiB preview of wasm modules in the listing', () => {
 			const examples = listExamples();
 			for (const example of examples) {
 				for (const module of example.modules ?? []) {
 					expect('base64' in module).toBe(false);
-					expect(module.assetPath).toMatch(/^\/modules\//);
+					if (module.kind === 'wasm') {
+						expect(module.assetPath).toMatch(new RegExp(`^${ASSET_PREFIX}/modules/`));
+						expect(atob(module.previewBase64).length).toBeLessThanOrEqual(1536);
+					}
 				}
 			}
 		});
 	});
 
 	describe('permissions round-trip', () => {
+		it('gives write-your-own the complete capability set used by its prompt', () => {
+			const example = listExamples().find((e) => e.id === 'write-your-own');
+			expect(example?.permissions).toEqual({
+				fetch: 'page-links',
+				fetchDepth: 2,
+				maxFetches: 6,
+				cpuMs: 5000,
+				storage: 'scoped',
+			});
+		});
+
 		it('exposes fetchDepth and maxFetches on arxiv-digest in the listing', () => {
 			const examples = listExamples();
 			const arxivDigest = examples.find((e) => e.id === 'arxiv-digest');
@@ -112,7 +148,13 @@ describe('manifest', () => {
 		it('exposes the same assetPath as listExamples() for wasm-add (no separate server-only shape)', () => {
 			const example = getExample('wasm-add');
 			expect(example?.modules).toHaveLength(1);
-			expect(example?.modules?.[0]).toEqual({ name: 'add.wasm', kind: 'wasm', assetPath: '/modules/wasm-add/add.wasm' });
+			expect(example?.modules?.[0]).toEqual(
+				expect.objectContaining({
+					name: 'add.wasm',
+					kind: 'wasm',
+					assetPath: `${ASSET_PREFIX}/modules/wasm-add/add.wasm`,
+				}),
+			);
 		});
 	});
 });

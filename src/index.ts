@@ -1,7 +1,7 @@
 import { fetchTarget } from './runtime/fetch-target';
 import { runInLoader } from './runtime/loader';
 import { transpileUserCode, selectReferencedDeps } from './runtime/transpile';
-import { extractLinkedUrls } from './runtime/extract-urls';
+import { extractLinkedResources } from './runtime/extract-urls';
 import { isValidPermissions, validateCustomModules, normalizeStoreId, deriveStoreKey, hashCode, STORE_REGISTRY_NAME } from './runtime/core';
 import { releaseGateRun, collectGateSpans } from './runtime/capability-gate';
 import { Tracer, type Trace, type GateSpanDraft } from './runtime/trace';
@@ -15,6 +15,7 @@ import { LogTailer } from './runtime/log-tailer';
 import { LOG_MAX_LINES, LOG_MAX_BYTES } from './runtime/log-types';
 import { verifyTurnstile } from './runtime/turnstile';
 import { extractMarkdown, renderMarkdownDocument } from './runtime/markdown-html';
+import { API_PREFIX } from './paths';
 
 /** Timeout (ms) for reading logs from LogSession after run completes */
 const LOG_READ_TIMEOUT_MS = 500;
@@ -75,6 +76,7 @@ async function loadExampleWasmModules(
 ): Promise<{ ok: true; modules: Record<string, Uint8Array> } | { ok: false; error: { kind: RunErrorKind; message: string } }> {
 	const wasmModules: Record<string, Uint8Array> = {};
 	for (const m of modules) {
+		if (m.kind !== 'wasm') continue;
 		const res = await env.ASSETS.fetch(new URL(m.assetPath, 'https://assets.local'));
 		if (!res.ok) {
 			return { ok: false, error: { kind: 'loader_failed', message: `Failed to load module asset ${m.assetPath}: HTTP ${res.status}` } };
@@ -173,13 +175,13 @@ async function handleRun(request: Request, env: Env, ctx: ExecutionContext): Pro
 		return jsonError(400, 'bad_request', 'Missing required field: worker');
 	}
 
-	const { type: workerType, exampleId, customCode, modules: workerModules } = worker as Partial<
-		{ type?: unknown } & Record<'exampleId' | 'customCode', unknown> & Record<'modules', unknown>
+	const { type: workerType, exampleId, customCode, modules: workerModules, sourceExampleId } = worker as Partial<
+		{ type?: unknown } & Record<'exampleId' | 'customCode' | 'sourceExampleId', unknown> & Record<'modules', unknown>
 	>;
 
 	let userWorker: UserWorker;
-	// Only populated for a custom run whose request declares wasm modules
-	// (validated/decoded here so a bad request 400s before any fetch/loader work).
+	// Populated for custom runs that declare additional source or wasm modules.
+	let requestJsModules: Record<string, string> | undefined;
 	let requestWasmModules: Record<string, Uint8Array> | undefined;
 	if (workerType === 'example') {
 		if (typeof exampleId !== 'string') {
@@ -195,11 +197,37 @@ async function handleRun(request: Request, env: Env, ctx: ExecutionContext): Pro
 			if (!validated.ok) {
 				return jsonError(400, 'bad_request', validated.message);
 			}
-			requestWasmModules = validated.modules;
+			requestJsModules = validated.jsModules;
+			requestWasmModules = validated.wasmModules;
 		}
-		userWorker = { type: 'custom', customCode };
+		userWorker = { type: 'custom', customCode, ...(typeof sourceExampleId === 'string' ? { sourceExampleId } : {}) };
 	} else {
 		return jsonError(400, 'bad_request', 'worker.type must be "example" or "custom"');
+	}
+
+	// workerd does not enforce Dynamic Worker CPU limits during local
+	// development. Letting this registered infinite-loop example reach the
+	// loader pins the local process even if its HTTP/RPC caller disconnects.
+	// Production still runs the real example against the platform CPU limit.
+	if (
+		env.ENVIRONMENT === 'development' &&
+		((userWorker.type === 'example' && userWorker.exampleId === 'cpu-spin') ||
+			(userWorker.type === 'custom' && userWorker.sourceExampleId === 'cpu-spin'))
+	) {
+		return new Response(
+			JSON.stringify({
+				ok: false,
+				error: {
+					kind: 'local_cpu_limits_unavailable',
+					message: 'This example is disabled locally because Dynamic Worker CPU limits are only enforced when deployed.',
+				},
+				logs: [],
+				logsTruncated: false,
+				timingMs: 0,
+				inputTruncated: false,
+			}),
+			{ status: 200, headers: { 'content-type': 'application/json' } },
+		);
 	}
 
 	// Trace setup: runId doubles as traceId (spec-fixed — every span of an
@@ -307,6 +335,17 @@ async function handleRun(request: Request, env: Env, ctx: ExecutionContext): Pro
 			}
 		}
 
+		if (requestJsModules && Object.keys(requestJsModules).length > 0) {
+			extraModules ??= {};
+			for (const [name, source] of Object.entries(requestJsModules)) {
+				const moduleResult = transpileUserCode(source);
+				if (moduleResult.type === 'failure') {
+					return jsonError(400, 'compile_failed', `Module ${name}: ${moduleResult.error.message}`);
+				}
+				extraModules[name] = moduleResult.code;
+			}
+		}
+
 		wasmModules = requestWasmModules;
 	}
 
@@ -354,15 +393,16 @@ async function handleRun(request: Request, env: Env, ctx: ExecutionContext): Pro
 		);
 	}
 
-	// With fetch permission, the allowlist is exactly the URLs referenced by the
-	// fetched page — the gate rejects anything else (no arbitrary spidering).
-	const allowedUrls =
+	// With fetch permission, mint an opaque grant for each resource referenced by
+	// the fetched page. The harness turns these into zero-argument read handles;
+	// arbitrary URL strings cannot manufacture authority.
+	const initialResources =
 		permissions?.fetch === 'page-links'
-			? extractLinkedUrls(
+			? extractLinkedResources(
 					fetchOutcome.input.body,
 					fetchOutcome.input.contentType,
 					fetchOutcome.input.finalUrl || fetchOutcome.input.url,
-				)
+				).map((resource) => ({ ...resource, id: crypto.randomUUID() }))
 			: undefined;
 
 	// Run code — either the direct loader path, or (under a storage grant) via the
@@ -418,7 +458,7 @@ async function handleRun(request: Request, env: Env, ctx: ExecutionContext): Pro
 			extraModules,
 			wasmModules,
 			permissions,
-			allowedUrls,
+			initialResources,
 		});
 		result = runOut.result;
 		gateSpanDrafts = runOut.gateSpans;
@@ -428,7 +468,7 @@ async function handleRun(request: Request, env: Env, ctx: ExecutionContext): Pro
 			extraModules,
 			wasmModules,
 			permissions,
-			allowedUrls,
+			initialResources,
 		});
 		gateSpanDrafts = collectGateSpans(runId);
 	}
@@ -440,7 +480,7 @@ async function handleRun(request: Request, env: Env, ctx: ExecutionContext): Pro
 		...(userWorker.type === 'example' ? { exampleId: userWorker.exampleId } : { custom: true }),
 		...(result.type === 'failure' ? { errorKind: result.error.kind, error: result.error.message } : {}),
 	});
-	// Gate calls (env.fetch/env.fetchFile), including denied attempts, nest
+	// Resource capability reads, including denied attempts, nest
 	// under the loader span — they only ever happen during the loader's
 	// invocation of the transform.
 	tracer.addExternalSpans(gateSpanDrafts, loaderSpanId);
@@ -493,27 +533,27 @@ export function setTurnstileVerifier(verifier: typeof verifyTurnstile): void {
 	turnstileVerifier = verifier;
 }
 
-export default {
+const demoApiHandler = {
 	async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
 		const url = new URL(request.url);
 
 		// Route GET /api/examples
-		if (url.pathname === '/api/examples') {
+		if (url.pathname === `${API_PREFIX}/examples`) {
 			return handleExamples(request);
 		}
 
 		// Route GET /api/config
-		if (url.pathname === '/api/config') {
+		if (url.pathname === `${API_PREFIX}/config`) {
 			return handleConfig(request, env);
 		}
 
 		// Route POST /api/run
-		if (url.pathname === '/api/run') {
+		if (url.pathname === `${API_PREFIX}/run`) {
 			return handleRun(request, env, ctx);
 		}
 
 		// Route DELETE /api/store
-		if (url.pathname === '/api/store') {
+		if (url.pathname === `${API_PREFIX}/store`) {
 			return handleStore(request, env);
 		}
 
@@ -521,3 +561,6 @@ export default {
 		return jsonError(404, 'bad_request', 'Not found');
 	},
 } satisfies ExportedHandler<Env>;
+
+export { demoApiHandler };
+export default demoApiHandler;

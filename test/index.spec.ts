@@ -4,6 +4,7 @@ import worker, { setTurnstileVerifier } from '../src/index';
 import { getExample } from '../src/examples/manifest';
 import articleHtml from './examples/fixtures/article.html?raw';
 import dummyPdfBase64 from './examples/fixtures/dummy-pdf.base64.txt?raw';
+import { API_PREFIX, ASSET_PREFIX } from '../src/paths';
 
 const IncomingRequest = Request<unknown, IncomingRequestCfProperties>;
 
@@ -34,7 +35,7 @@ function stubTargetFetch(body: string, contentType = 'text/html'): void {
 
 describe('GET /api/examples handler', () => {
 	it('returns 200 with example list', async () => {
-		const request = new IncomingRequest('http://example.com/api/examples', {
+		const request = new IncomingRequest(`http://example.com${API_PREFIX}/examples`, {
 			method: 'GET',
 		});
 		const ctx = createExecutionContext();
@@ -46,7 +47,7 @@ describe('GET /api/examples handler', () => {
 
 		const data = await response.json<Array<{ id: string; title: string; description: string }>>();
 		expect(Array.isArray(data)).toBe(true);
-		expect(data.length).toBe(12);
+		expect(data.length).toBe(13);
 
 		// Should not contain code field
 		for (const example of data) {
@@ -55,7 +56,7 @@ describe('GET /api/examples handler', () => {
 	});
 
 	it('surfaces maxFetches in the digest examples permissions (round-tripped through the manifest)', async () => {
-		const request = new IncomingRequest('http://example.com/api/examples', { method: 'GET' });
+		const request = new IncomingRequest(`http://example.com${API_PREFIX}/examples`, { method: 'GET' });
 		const ctx = createExecutionContext();
 		const response = await worker.fetch(request, env, ctx);
 		await waitOnExecutionContext(ctx);
@@ -68,8 +69,8 @@ describe('GET /api/examples handler', () => {
 		expect(arxivDigest?.permissions?.fetchDepth).toBe(2);
 	});
 
-	it('never ships module base64 in the listing (module bytes are static assets)', async () => {
-		const request = new IncomingRequest('http://example.com/api/examples', { method: 'GET' });
+	it('ships only a small wasm preview in the listing', async () => {
+		const request = new IncomingRequest(`http://example.com${API_PREFIX}/examples`, { method: 'GET' });
 		const ctx = createExecutionContext();
 		const response = await worker.fetch(request, env, ctx);
 		await waitOnExecutionContext(ctx);
@@ -79,14 +80,33 @@ describe('GET /api/examples handler', () => {
 		// this up to ~8.5 MB for every widget load.
 		expect(body.length).toBeLessThan(100 * 1024);
 
-		const data = JSON.parse(body) as Array<{ id: string; modules?: Array<{ name: string; kind: string; assetPath?: string; base64?: string }> }>;
+		const data = JSON.parse(body) as Array<{
+			id: string;
+			modules?: Array<{
+				name: string;
+				kind: string;
+				assetPath?: string;
+				previewBase64?: string;
+				byteSize?: number;
+				base64?: string;
+			}>;
+		}>;
 		const imageHash = data.find((e) => e.id === 'image-hash');
 		expect(imageHash?.modules).toHaveLength(1);
-		expect(imageHash?.modules?.[0]).toEqual({ name: 'photon.wasm', kind: 'wasm', assetPath: '/modules/image-hash/photon.wasm' });
+		expect(imageHash?.modules?.[0]).toEqual(
+				expect.objectContaining({
+					name: 'photon.wasm',
+					kind: 'wasm',
+					assetPath: `${ASSET_PREFIX}/modules/image-hash/photon.wasm`,
+					byteSize: expect.any(Number),
+				}),
+			);
+		expect(imageHash?.modules?.[0]?.byteSize).toBeGreaterThan(1_000_000);
+		expect(atob(imageHash?.modules?.[0]?.previewBase64 ?? '').length).toBe(1536);
 	});
 
 	it('returns 405 for POST /api/examples', async () => {
-		const request = new IncomingRequest('http://example.com/api/examples', {
+		const request = new IncomingRequest(`http://example.com${API_PREFIX}/examples`, {
 			method: 'POST',
 		});
 		const ctx = createExecutionContext();
@@ -97,7 +117,7 @@ describe('GET /api/examples handler', () => {
 	});
 
 	it('GET /api/examples still returns manifest with assets binding enabled (routing correct)', async () => {
-		const request = new IncomingRequest('http://example.com/api/examples', {
+		const request = new IncomingRequest(`http://example.com${API_PREFIX}/examples`, {
 			method: 'GET',
 		});
 		const ctx = createExecutionContext();
@@ -115,7 +135,7 @@ describe('GET /api/examples handler', () => {
 
 describe('GET /api/config handler', () => {
 	it('returns 200 with turnstileSitekey', async () => {
-		const request = new IncomingRequest('http://example.com/api/config', {
+		const request = new IncomingRequest(`http://example.com${API_PREFIX}/config`, {
 			method: 'GET',
 		});
 		const ctx = createExecutionContext();
@@ -136,7 +156,7 @@ describe('GET /api/config handler', () => {
 	});
 
 	it('returns 405 for POST /api/config', async () => {
-		const request = new IncomingRequest('http://example.com/api/config', {
+		const request = new IncomingRequest(`http://example.com${API_PREFIX}/config`, {
 			method: 'POST',
 		});
 		const ctx = createExecutionContext();
@@ -166,7 +186,7 @@ describe('POST /api/run handler', () => {
 		});
 
 		it('returns 405 for GET /api/run', async () => {
-			const request = new IncomingRequest('http://example.com/api/run', {
+			const request = new IncomingRequest(`http://example.com${API_PREFIX}/run`, {
 				method: 'GET',
 			});
 			const ctx = createExecutionContext();
@@ -176,7 +196,7 @@ describe('POST /api/run handler', () => {
 		});
 
 		it('returns 400 for malformed JSON body', async () => {
-			const request = new IncomingRequest('http://example.com/api/run', {
+			const request = new IncomingRequest(`http://example.com${API_PREFIX}/run`, {
 				method: 'POST',
 				body: 'invalid json',
 			});
@@ -187,7 +207,7 @@ describe('POST /api/run handler', () => {
 		});
 
 		it('returns 400 when worker is missing', async () => {
-			const request = new IncomingRequest('http://example.com/api/run', {
+			const request = new IncomingRequest(`http://example.com${API_PREFIX}/run`, {
 				method: 'POST',
 				body: JSON.stringify({ url: 'http://example.com' }),
 			});
@@ -198,7 +218,7 @@ describe('POST /api/run handler', () => {
 		});
 
 		it('returns 400 when url is missing', async () => {
-			const request = new IncomingRequest('http://example.com/api/run', {
+			const request = new IncomingRequest(`http://example.com${API_PREFIX}/run`, {
 				method: 'POST',
 				body: JSON.stringify({ worker: { type: 'custom', customCode: 'export default () => 42' } }),
 			});
@@ -213,7 +233,7 @@ describe('POST /api/run handler', () => {
 			// budget with the other tests in this file (RATE_LIMITER has real per-key
 			// state under vitest-pool-workers, unlike the AGENTS.md no-op-locally note
 			// which applies to the deployed RATE_LIMITER's actual counting accuracy).
-			const request = new IncomingRequest('http://example.com/api/run', {
+			const request = new IncomingRequest(`http://example.com${API_PREFIX}/run`, {
 				method: 'POST',
 				headers: { 'CF-Connecting-IP': '203.0.113.201' },
 				body: JSON.stringify({ url: 'http://example.com', worker: 'export default () => 42' }),
@@ -225,7 +245,7 @@ describe('POST /api/run handler', () => {
 		});
 
 		it('returns 400 when worker.type is unknown', async () => {
-			const request = new IncomingRequest('http://example.com/api/run', {
+			const request = new IncomingRequest(`http://example.com${API_PREFIX}/run`, {
 				method: 'POST',
 				headers: { 'CF-Connecting-IP': '203.0.113.202' },
 				body: JSON.stringify({ url: 'http://example.com', worker: { type: 'bogus' } }),
@@ -237,7 +257,7 @@ describe('POST /api/run handler', () => {
 		});
 
 		it('returns 400 when worker.type is example but exampleId is not a string', async () => {
-			const request = new IncomingRequest('http://example.com/api/run', {
+			const request = new IncomingRequest(`http://example.com${API_PREFIX}/run`, {
 				method: 'POST',
 				headers: { 'CF-Connecting-IP': '203.0.113.203' },
 				body: JSON.stringify({ url: 'http://example.com', worker: { type: 'example', exampleId: 42 } }),
@@ -249,7 +269,7 @@ describe('POST /api/run handler', () => {
 		});
 
 		it('returns 400 when worker.type is custom but customCode is not a string', async () => {
-			const request = new IncomingRequest('http://example.com/api/run', {
+			const request = new IncomingRequest(`http://example.com${API_PREFIX}/run`, {
 				method: 'POST',
 				headers: { 'CF-Connecting-IP': '203.0.113.204' },
 				body: JSON.stringify({ url: 'http://example.com', worker: { type: 'custom', customCode: 42 } }),
@@ -265,7 +285,7 @@ describe('POST /api/run handler', () => {
 			// the pipeline it would call fetchTarget and respond 200 with an
 			// ok:false fetch_failed body. A 404 instead proves the unknown id is
 			// rejected up front, before any target fetch or loader invocation.
-			const request = new IncomingRequest('http://example.com/api/run', {
+			const request = new IncomingRequest(`http://example.com${API_PREFIX}/run`, {
 				method: 'POST',
 				body: JSON.stringify({
 					worker: { type: 'example', exampleId: 'nonexistent-example' },
@@ -277,12 +297,55 @@ describe('POST /api/run handler', () => {
 			await waitOnExecutionContext(ctx);
 			expect(response.status).toBe(404);
 		});
+
+		it('refuses the cpu-spin example in local development before invoking the loader', async () => {
+			const developmentEnv = { ...env, ENVIRONMENT: 'development' } as Env;
+			const request = new IncomingRequest(`http://example.com${API_PREFIX}/run`, {
+				method: 'POST',
+				headers: { 'CF-Connecting-IP': '203.0.113.205' },
+				body: JSON.stringify({
+					worker: { type: 'example', exampleId: 'cpu-spin' },
+					url: 'http://example.com',
+				}),
+			});
+			const ctx = createExecutionContext();
+			const response = await worker.fetch(request, developmentEnv, ctx);
+			await waitOnExecutionContext(ctx);
+
+			expect(response.status).toBe(200);
+			const data = await response.json<{ ok: boolean; error?: { kind: string } }>();
+			expect(data.ok).toBe(false);
+			expect(data.error?.kind).toBe('local_cpu_limits_unavailable');
+		});
+
+		it('also refuses locally edited code originating from the cpu-spin example', async () => {
+			const developmentEnv = { ...env, ENVIRONMENT: 'development' } as Env;
+			const request = new IncomingRequest(`http://example.com${API_PREFIX}/run`, {
+				method: 'POST',
+				headers: { 'CF-Connecting-IP': '203.0.113.206' },
+				body: JSON.stringify({
+					worker: {
+						type: 'custom',
+						customCode: 'while (true) {}',
+						sourceExampleId: 'cpu-spin',
+					},
+					url: 'http://example.com',
+				}),
+			});
+			const ctx = createExecutionContext();
+			const response = await worker.fetch(request, developmentEnv, ctx);
+			await waitOnExecutionContext(ctx);
+
+			const data = await response.json<{ ok: boolean; error?: { kind: string } }>();
+			expect(data.ok).toBe(false);
+			expect(data.error?.kind).toBe('local_cpu_limits_unavailable');
+		});
 	});
 
 	describe('happy path - successful transform', () => {
 		it('POST /api/run with customCode returns 200 and result structure', async () => {
 			const transformCode = 'export default (env, input) => input.status';
-			const request = new IncomingRequest('http://example.com/api/run', {
+			const request = new IncomingRequest(`http://example.com${API_PREFIX}/run`, {
 				method: 'POST',
 				body: JSON.stringify({
 					worker: { type: 'custom', customCode: transformCode },
@@ -311,7 +374,7 @@ describe('POST /api/run handler', () => {
 		});
 
 		it('POST /api/run with exampleId resolves and runs the bundled code', async () => {
-			const request = new IncomingRequest('http://example.com/api/run', {
+			const request = new IncomingRequest(`http://example.com${API_PREFIX}/run`, {
 				method: 'POST',
 				body: JSON.stringify({
 					worker: { type: 'example', exampleId: 'opengraph' },
@@ -353,7 +416,7 @@ describe('POST /api/run handler', () => {
 				interface Result { doubled: number }
 				export default (env: unknown, input: Input): Result => ({ doubled: input.status * 2 });
 			`;
-			const request = new IncomingRequest('http://example.com/api/run', {
+			const request = new IncomingRequest(`http://example.com${API_PREFIX}/run`, {
 				method: 'POST',
 				// Distinct CF-Connecting-IP so this doesn't share the 'anonymous'
 				// rate-limit bucket with other tests in this file.
@@ -377,7 +440,7 @@ describe('POST /api/run handler', () => {
 			stubTargetFetch('<html>hi</html>');
 
 			const brokenCode = 'export default (env, input) => { const x = ; }';
-			const request = new IncomingRequest('http://example.com/api/run', {
+			const request = new IncomingRequest(`http://example.com${API_PREFIX}/run`, {
 				method: 'POST',
 				headers: { 'CF-Connecting-IP': '203.0.113.211' },
 				body: JSON.stringify({
@@ -407,7 +470,7 @@ describe('POST /api/run handler', () => {
 
 			stubTargetFetch(articleHtml);
 
-			const request = new IncomingRequest('http://example.com/api/run', {
+			const request = new IncomingRequest(`http://example.com${API_PREFIX}/run`, {
 				method: 'POST',
 				headers: { 'CF-Connecting-IP': '203.0.113.212' },
 				body: JSON.stringify({
@@ -432,7 +495,7 @@ describe('POST /api/run handler', () => {
 			stubTargetFetch('<html>hi</html>');
 
 			const customCode = "export default (env, input) => ({ markdown: '# hi' })";
-			const request = new IncomingRequest('http://example.com/api/run', {
+			const request = new IncomingRequest(`http://example.com${API_PREFIX}/run`, {
 				method: 'POST',
 				headers: { 'CF-Connecting-IP': '203.0.113.230' },
 				body: JSON.stringify({
@@ -455,7 +518,7 @@ describe('POST /api/run handler', () => {
 			stubTargetFetch('<html>hi</html>');
 
 			const customCode = 'export default (env, input) => input.status';
-			const request = new IncomingRequest('http://example.com/api/run', {
+			const request = new IncomingRequest(`http://example.com${API_PREFIX}/run`, {
 				method: 'POST',
 				headers: { 'CF-Connecting-IP': '203.0.113.231' },
 				body: JSON.stringify({
@@ -474,15 +537,15 @@ describe('POST /api/run handler', () => {
 		});
 	});
 
-	describe('capabilities: page-links fetch permission (end-to-end)', () => {
+	describe('capabilities: page-links resource permission (end-to-end)', () => {
 		afterEach(() => {
 			vi.unstubAllGlobals();
 		});
 
-		it('custom run with fetch:page-links can fetch a URL linked from the fetched page and return its content', async () => {
+		it('custom run with fetch:page-links can read a resource capability granted by the fetched page', async () => {
 			const linked = 'https://example.com/linked-doc';
-			// One stub serves both the target page fetch (fetchTarget) and the gate's
-			// fetch, keyed by URL: the page links to `linked`, the gate then fetches it.
+			// One stub serves both the target page fetch (fetchTarget) and the granted
+			// resource's read(), keyed by URL.
 			vi.stubGlobal(
 				'fetch',
 				vi.fn((input: RequestInfo | URL) => {
@@ -500,11 +563,14 @@ describe('POST /api/run handler', () => {
 			);
 
 			const customCode = `export default async (env, input) => {
-				const res = await env.fetch('${linked}');
+				const resource = env.resources.get('${linked}');
+				if (!resource) throw new Error('linked resource was not granted');
+				const res = await resource.read();
+				if (res.kind !== 'text') throw new Error('expected text resource');
 				return { fetchedStatus: res.status, fetchedBody: res.body };
 			}`;
 
-			const request = new IncomingRequest('http://example.com/api/run', {
+			const request = new IncomingRequest(`http://example.com${API_PREFIX}/run`, {
 				method: 'POST',
 				headers: { 'CF-Connecting-IP': '203.0.113.220' },
 				body: JSON.stringify({
@@ -524,7 +590,7 @@ describe('POST /api/run handler', () => {
 			expect(data.result?.fetchedBody).toBe('LINKED PAGE CONTENT');
 		});
 
-		it('a fetch to a URL NOT linked from the page is denied (transform_threw, not referenced)', async () => {
+		it('a URL not linked from the page has no resource capability', async () => {
 			vi.stubGlobal(
 				'fetch',
 				vi.fn(() =>
@@ -537,11 +603,10 @@ describe('POST /api/run handler', () => {
 				),
 			);
 
-			const customCode = `export default async (env, input) => {
-				return await env.fetch('https://example.com/not-linked');
-			}`;
+			const customCode = `export default async (env, input) =>
+				env.resources.has('https://example.com/not-linked');`;
 
-			const request = new IncomingRequest('http://example.com/api/run', {
+			const request = new IncomingRequest(`http://example.com${API_PREFIX}/run`, {
 				method: 'POST',
 				headers: { 'CF-Connecting-IP': '203.0.113.221' },
 				body: JSON.stringify({
@@ -554,13 +619,12 @@ describe('POST /api/run handler', () => {
 			const response = await worker.fetch(request, env, ctx);
 			await waitOnExecutionContext(ctx);
 
-			const data = await response.json<{ ok: boolean; error?: { kind: string; message: string } }>();
-			expect(data.ok).toBe(false);
-			expect(data.error?.kind).toBe('transform_threw');
-			expect(data.error?.message).toContain('not reachable within the granted fetch depth from the fetched page');
+			const data = await response.json<{ ok: boolean; result?: boolean }>();
+			expect(data.ok).toBe(true);
+			expect(data.result).toBe(false);
 		});
 
-		it('custom run with fetchDepth 2 can fetch a link-of-a-link (B then C)', async () => {
+		it('custom run with fetchDepth 2 can read a resource discovered from another resource (B then C)', async () => {
 			const linkedB = 'https://example.com/linked-b';
 			const linkedC = 'https://example.com/linked-c';
 			vi.stubGlobal(
@@ -588,12 +652,17 @@ describe('POST /api/run handler', () => {
 			);
 
 			const customCode = `export default async (env, input) => {
-				const b = await env.fetch('${linkedB}');
-				const c = await env.fetch('${linkedC}');
+				const bResource = env.resources.get('${linkedB}');
+				if (!bResource) throw new Error('B resource was not granted');
+				const b = await bResource.read();
+				if (b.kind !== 'text') throw new Error('expected B to be text');
+				const cResource = b.resources.get('${linkedC}');
+				if (!cResource) throw new Error('C resource was not granted');
+				const c = await cResource.read();
 				return { bStatus: b.status, cStatus: c.status };
 			}`;
 
-			const request = new IncomingRequest('http://example.com/api/run', {
+			const request = new IncomingRequest(`http://example.com${API_PREFIX}/run`, {
 				method: 'POST',
 				headers: { 'CF-Connecting-IP': '203.0.113.223' },
 				body: JSON.stringify({
@@ -613,7 +682,7 @@ describe('POST /api/run handler', () => {
 			expect(data.result?.cStatus).toBe(200);
 		});
 
-		it('control: without fetchDepth (default 1), fetching C (a link-of-a-link) throws', async () => {
+		it('control: without fetchDepth (default 1), a read resource does not grant its child C capability', async () => {
 			const linkedB = 'https://example.com/linked-b-2';
 			const linkedC = 'https://example.com/linked-c-2';
 			vi.stubGlobal(
@@ -638,12 +707,16 @@ describe('POST /api/run handler', () => {
 			);
 
 			const customCode = `export default async (env, input) => {
-				await env.fetch('${linkedB}');
-				await env.fetch('${linkedC}');
+				const bResource = env.resources.get('${linkedB}');
+				if (!bResource) throw new Error('B resource was not granted');
+				const b = await bResource.read();
+				if (b.kind !== 'text') throw new Error('expected B to be text');
+				const cResource = b.resources.get('${linkedC}');
+				if (!cResource) throw new Error('C resource was not granted');
 				return 'should-not-reach';
 			}`;
 
-			const request = new IncomingRequest('http://example.com/api/run', {
+			const request = new IncomingRequest(`http://example.com${API_PREFIX}/run`, {
 				method: 'POST',
 				headers: { 'CF-Connecting-IP': '203.0.113.224' },
 				body: JSON.stringify({
@@ -660,10 +733,10 @@ describe('POST /api/run handler', () => {
 			const data = await response.json<{ ok: boolean; error?: { kind: string; message: string } }>();
 			expect(data.ok).toBe(false);
 			expect(data.error?.kind).toBe('transform_threw');
-			expect(data.error?.message).toContain('not reachable within the granted fetch depth from the fetched page');
+			expect(data.error?.message).toContain('C resource was not granted');
 		});
 
-		it('custom run with maxFetches: 2 is denied on the third of three allowlisted fetches, naming the granted limit', async () => {
+		it('custom run with maxFetches: 2 is denied on the third of three granted resource reads, naming the granted limit', async () => {
 			const urlA = 'https://example.com/max-fetches-a';
 			const urlB = 'https://example.com/max-fetches-b';
 			const urlC = 'https://example.com/max-fetches-c';
@@ -685,16 +758,20 @@ describe('POST /api/run handler', () => {
 
 			const customCode = `export default async (env, input) => {
 				try {
-					await env.fetch('${urlA}');
-					await env.fetch('${urlB}');
-					await env.fetch('${urlC}');
+					const a = env.resources.get('${urlA}');
+					const b = env.resources.get('${urlB}');
+					const c = env.resources.get('${urlC}');
+					if (!a || !b || !c) throw new Error('expected all resource grants');
+					await a.read();
+					await b.read();
+					await c.read();
 					return 'should-not-reach';
 				} catch (e) {
 					return String(e.message || e);
 				}
 			}`;
 
-			const request = new IncomingRequest('http://example.com/api/run', {
+			const request = new IncomingRequest(`http://example.com${API_PREFIX}/run`, {
 				method: 'POST',
 				headers: { 'CF-Connecting-IP': '203.0.113.225' },
 				body: JSON.stringify({
@@ -710,11 +787,11 @@ describe('POST /api/run handler', () => {
 			expect(response.status).toBe(200);
 			const data = await response.json<{ ok: boolean; result?: string }>();
 			expect(data.ok).toBe(true);
-			expect(data.result).toContain('2-fetch limit');
+			expect(data.result).toContain('2-read limit');
 		});
 
 		it('rejects a custom run with a malformed permissions shape (400 bad_request)', async () => {
-			const request = new IncomingRequest('http://example.com/api/run', {
+			const request = new IncomingRequest(`http://example.com${API_PREFIX}/run`, {
 				method: 'POST',
 				headers: { 'CF-Connecting-IP': '203.0.113.222' },
 				body: JSON.stringify({
@@ -730,6 +807,31 @@ describe('POST /api/run handler', () => {
 		});
 	});
 
+	describe('JavaScript modules', () => {
+		it('uses an edited support module in a custom run', async () => {
+			stubTargetFetch('<html>hi</html>');
+			const request = new IncomingRequest(`http://example.com${API_PREFIX}/run`, {
+				method: 'POST',
+				headers: { 'CF-Connecting-IP': '203.0.113.230' },
+				body: JSON.stringify({
+					worker: {
+						type: 'custom',
+						customCode: "import { answer } from './helper'; export default () => answer;",
+						modules: [{ name: 'helper', kind: 'js', source: 'export const answer: number = 42;' }],
+					},
+					url: 'http://example.com/test',
+				}),
+			});
+			const ctx = createExecutionContext();
+			const response = await worker.fetch(request, env, ctx);
+			await waitOnExecutionContext(ctx);
+
+			expect(response.status).toBe(200);
+			const data = await response.json<{ ok: boolean; result?: number }>();
+			expect(data).toMatchObject({ ok: true, result: 42 });
+		});
+	});
+
 	describe('wasm modules', () => {
 		// 41-byte wasm binary exporting add(i32,i32)->i32 — see AGENTS.md/task spec.
 		const ADD_WASM_BASE64 = 'AGFzbQEAAAABBwFgAn9/AX8DAgEABwcBA2FkZAAACgkBBwAgACABags=';
@@ -741,7 +843,7 @@ describe('POST /api/run handler', () => {
 		it('POST /api/run { type: "example", exampleId: "wasm-add" } succeeds and computes a + b in wasm', async () => {
 			stubTargetFetch('<html>hello world</html>');
 
-			const request = new IncomingRequest('http://example.com/api/run', {
+			const request = new IncomingRequest(`http://example.com${API_PREFIX}/run`, {
 				method: 'POST',
 				headers: { 'CF-Connecting-IP': '203.0.113.230' },
 				body: JSON.stringify({
@@ -774,7 +876,7 @@ export default async (env, input) => {
 	return exports.add(2, 3);
 };`;
 
-			const request = new IncomingRequest('http://example.com/api/run', {
+			const request = new IncomingRequest(`http://example.com${API_PREFIX}/run`, {
 				method: 'POST',
 				headers: { 'CF-Connecting-IP': '203.0.113.231' },
 				body: JSON.stringify({
@@ -793,7 +895,7 @@ export default async (env, input) => {
 		});
 
 		it('rejects invalid base64 with 400 bad_request', async () => {
-			const request = new IncomingRequest('http://example.com/api/run', {
+			const request = new IncomingRequest(`http://example.com${API_PREFIX}/run`, {
 				method: 'POST',
 				headers: { 'CF-Connecting-IP': '203.0.113.232' },
 				body: JSON.stringify({
@@ -819,7 +921,7 @@ export default async (env, input) => {
 			for (const byte of oversized) binary += String.fromCharCode(byte);
 			const base64 = btoa(binary);
 
-			const request = new IncomingRequest('http://example.com/api/run', {
+			const request = new IncomingRequest(`http://example.com${API_PREFIX}/run`, {
 				method: 'POST',
 				headers: { 'CF-Connecting-IP': '203.0.113.233' },
 				body: JSON.stringify({
@@ -835,7 +937,7 @@ export default async (env, input) => {
 		});
 
 		it('rejects a bad module name with 400 bad_request', async () => {
-			const request = new IncomingRequest('http://example.com/api/run', {
+			const request = new IncomingRequest(`http://example.com${API_PREFIX}/run`, {
 				method: 'POST',
 				headers: { 'CF-Connecting-IP': '203.0.113.234' },
 				body: JSON.stringify({
@@ -855,7 +957,7 @@ export default async (env, input) => {
 		});
 	});
 
-	describe('image-hash example (photon wasm + fetchFile capability)', () => {
+	describe('image-hash example (photon wasm + image resource capability)', () => {
 		// A real, valid 1x1 PNG (the classic minimal test PNG).
 		const PNG_1X1_BASE64 =
 			'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==';
@@ -888,7 +990,7 @@ export default async (env, input) => {
 		it('POST /api/run { type: "example", exampleId: "image-hash" } fetches images and computes a dhash', async () => {
 			stubPageAndImage();
 
-			const request = new IncomingRequest('http://example.com/api/run', {
+			const request = new IncomingRequest(`http://example.com${API_PREFIX}/run`, {
 				method: 'POST',
 				headers: { 'CF-Connecting-IP': '203.0.113.240' },
 				body: JSON.stringify({
@@ -926,7 +1028,7 @@ export default async (env, input) => {
 			if (!photonModule) return;
 			const photonBase64 = await fetchModuleBase64(photonModule.assetPath);
 
-			const request = new IncomingRequest('http://example.com/api/run', {
+			const request = new IncomingRequest(`http://example.com${API_PREFIX}/run`, {
 				method: 'POST',
 				headers: { 'CF-Connecting-IP': '203.0.113.241' },
 				body: JSON.stringify({
@@ -958,7 +1060,7 @@ export default async (env, input) => {
 		});
 	});
 
-	describe('arxiv-pdf example (liteparse wasm + fetchFile capability)', () => {
+	describe('arxiv-pdf example (liteparse wasm + PDF resource capability)', () => {
 		afterEach(() => {
 			vi.unstubAllGlobals();
 		});
@@ -987,7 +1089,7 @@ export default async (env, input) => {
 		it('POST /api/run { type: "example", exampleId: "arxiv-pdf" } fetches the PDF and parses it to markdown', async () => {
 			stubAbstractAndPdf();
 
-			const request = new IncomingRequest('http://example.com/api/run', {
+			const request = new IncomingRequest(`http://example.com${API_PREFIX}/run`, {
 				method: 'POST',
 				headers: { 'CF-Connecting-IP': '203.0.113.242' },
 				body: JSON.stringify({
@@ -1002,12 +1104,15 @@ export default async (env, input) => {
 			expect(response.status).toBe(200);
 			const data = await response.json<{
 				ok: boolean;
-				result?: { title: string | null; pages: number; markdown: string; markdownTruncated: boolean };
+				result?: {
+					markdown: string;
+					json: { title: string | null; pages: number; markdownTruncated: boolean };
+				};
 				error?: { kind: string; message: string };
 			}>();
 			expect(data.ok).toBe(true);
-			expect(data.result?.title).toBe('Dummy PDF file');
-			expect(data.result?.pages).toBe(1);
+			expect(data.result?.json.title).toBe('Dummy PDF file');
+			expect(data.result?.json.pages).toBe(1);
 			expect(data.result?.markdown).toContain('Dummy PDF file');
 		});
 
@@ -1024,7 +1129,7 @@ export default async (env, input) => {
 				),
 			);
 
-			const request = new IncomingRequest('http://example.com/api/run', {
+			const request = new IncomingRequest(`http://example.com${API_PREFIX}/run`, {
 				method: 'POST',
 				headers: { 'CF-Connecting-IP': '203.0.113.243' },
 				body: JSON.stringify({
@@ -1044,7 +1149,7 @@ export default async (env, input) => {
 		});
 	});
 
-	describe('arxiv-digest example (fetchDepth 2: page -> abstract -> PDF)', () => {
+	describe('arxiv-digest example (resource depth 2: page -> abstract -> PDF)', () => {
 		const pageUrl = 'http://example.com/citing-page';
 		const absUrl = 'https://arxiv.org/abs/1234.5678';
 		const pdfUrl = 'https://arxiv.org/pdf/1234.5678';
@@ -1084,10 +1189,10 @@ export default async (env, input) => {
 			);
 		}
 
-		it('POST /api/run { type: "example", exampleId: "arxiv-digest" } grows the allowlist from the citing page to the abstract page to the PDF', async () => {
+		it('POST /api/run { type: "example", exampleId: "arxiv-digest" } grants resources from the citing page to the abstract page to the PDF', async () => {
 			stubPageAbsAndPdf();
 
-			const request = new IncomingRequest('http://example.com/api/run', {
+			const request = new IncomingRequest(`http://example.com${API_PREFIX}/run`, {
 				method: 'POST',
 				headers: { 'CF-Connecting-IP': '203.0.113.245' },
 				body: JSON.stringify({
@@ -1119,7 +1224,7 @@ export default async (env, input) => {
 		});
 	});
 
-	describe('github-repo example (env.fetch capability, embedded-URL following)', () => {
+	describe('github-repo example (resource capability, embedded-URL following)', () => {
 		const repoUrl = 'https://api.github.com/repos/cloudflare/workerd';
 		const contributorsUrl = 'https://api.github.com/repos/cloudflare/workerd/contributors';
 		const languagesUrl = 'https://api.github.com/repos/cloudflare/workerd/languages';
@@ -1182,7 +1287,7 @@ export default async (env, input) => {
 				}),
 			);
 
-			const request = new IncomingRequest('http://example.com/api/run', {
+			const request = new IncomingRequest(`http://example.com${API_PREFIX}/run`, {
 				method: 'POST',
 				headers: { 'CF-Connecting-IP': '203.0.113.242' },
 				body: JSON.stringify({
@@ -1242,7 +1347,7 @@ export default async (env, input) => {
 				}),
 			);
 
-			const request = new IncomingRequest('http://example.com/api/run', {
+			const request = new IncomingRequest(`http://example.com${API_PREFIX}/run`, {
 				method: 'POST',
 				headers: { 'CF-Connecting-IP': '203.0.113.243' },
 				body: JSON.stringify({
@@ -1271,7 +1376,7 @@ export default async (env, input) => {
 		});
 	});
 
-	describe('rss-digest example (env.fetch capability, feed item following)', () => {
+	describe('rss-digest example (resource capability, feed item following)', () => {
 		const feedUrl = 'http://example.com/feed.rss';
 		const article1Url = 'http://example.com/article1';
 		const article2Url = 'http://example.com/article2';
@@ -1317,7 +1422,7 @@ export default async (env, input) => {
 				}),
 			);
 
-			const request = new IncomingRequest('http://example.com/api/run', {
+			const request = new IncomingRequest(`http://example.com${API_PREFIX}/run`, {
 				method: 'POST',
 				headers: { 'CF-Connecting-IP': '203.0.113.244' },
 				body: JSON.stringify({
@@ -1333,23 +1438,26 @@ export default async (env, input) => {
 			const data = await response.json<{
 				ok: boolean;
 				result?: {
-					feedTitle: string | null;
-					itemCount: number;
-					items: Array<{ title: string | null; url: string; markdown?: string; error?: string }>;
+					markdown: string;
+					json: {
+						feedTitle: string | null;
+						itemCount: number;
+						items: Array<{ title: string | null; url: string; markdown?: string; error?: string }>;
+					};
 				};
 				error?: { kind: string; message: string };
 			}>();
 
 			expect(data.ok).toBe(true);
-			expect(data.result?.feedTitle).toBe('Example Feed');
-			expect(data.result?.itemCount).toBe(2);
+			expect(data.result?.json.feedTitle).toBe('Example Feed');
+			expect(data.result?.json.itemCount).toBe(2);
 
-			const first = data.result?.items.find((i) => i.url === article1Url);
+			const first = data.result?.json.items.find((i) => i.url === article1Url);
 			expect(first?.title).toBe('First Article');
 			expect(first?.markdown).toBeTruthy();
 			expect(first?.error).toBeUndefined();
 
-			const second = data.result?.items.find((i) => i.url === article2Url);
+			const second = data.result?.json.items.find((i) => i.url === article2Url);
 			expect(second?.title).toBe('Second Article');
 			expect(second?.error).toContain('404');
 		});
@@ -1374,7 +1482,7 @@ export default async (env, input) => {
 			vi.unstubAllGlobals();
 		});
 
-		it('a page-links run carries a full trace: root + target_fetch + loader + logs_read + gate spans (incl. a denied error span), correctly parented and monotonic', async () => {
+		it('a page-links run carries a full trace: root + target_fetch + loader + logs_read + resource read span, correctly parented and monotonic', async () => {
 			const linked = 'https://example.com/traced-linked';
 			const notLinked = 'https://example.com/traced-not-linked';
 			vi.stubGlobal(
@@ -1394,16 +1502,14 @@ export default async (env, input) => {
 			);
 
 			const customCode = `export default async (env, input) => {
-				const res = await env.fetch('${linked}');
-				try {
-					await env.fetch('${notLinked}');
-				} catch (e) {
-					// denied — expected; the trace should still record it as an error span
-				}
-				return res.status;
+				const resource = env.resources.get('${linked}');
+				if (!resource) throw new Error('linked resource was not granted');
+				const res = await resource.read();
+				if (res.kind !== 'text') throw new Error('expected text resource');
+				return { status: res.status, notLinkedIsGranted: env.resources.has('${notLinked}') };
 			}`;
 
-			const request = new IncomingRequest('http://example.com/api/run', {
+			const request = new IncomingRequest(`http://example.com${API_PREFIX}/run`, {
 				method: 'POST',
 				headers: { 'CF-Connecting-IP': '203.0.113.250' },
 				body: JSON.stringify({
@@ -1437,20 +1543,22 @@ export default async (env, input) => {
 			expect(loader).toBeDefined();
 			expect(logsRead).toBeDefined();
 
-			// Parenting: root has no parent; host phases parent to root; gate spans
-			// parent to the loader span.
+			// Parenting: root has no parent; host phases parent to root; resource-read
+			// spans parent to the loader span.
 			expect(root.parentSpanId).toBeUndefined();
 			expect(targetFetch.parentSpanId).toBe(root.spanId);
 			expect(loader.parentSpanId).toBe(root.spanId);
 			expect(logsRead.parentSpanId).toBe(root.spanId);
 
-			const gateSpans = spans.filter((s) => s.parentSpanId === loader.spanId);
-			expect(gateSpans).toHaveLength(2);
-			const okGate = gateSpans.find((s) => s.status === 'ok');
-			const deniedGate = gateSpans.find((s) => s.status === 'error');
-			expect(okGate?.attrs).toMatchObject({ name: 'env.fetch', kind: 'gate_fetch_text', url: linked, httpStatus: 200 });
-			expect(deniedGate?.attrs.url).toBe(notLinked);
-			expect(String(deniedGate?.attrs.denied)).toContain('not reachable within the granted fetch depth');
+			const resourceReadSpans = spans.filter((s) => s.parentSpanId === loader.spanId);
+			expect(resourceReadSpans).toHaveLength(1);
+			expect(resourceReadSpans[0]?.status).toBe('ok');
+			expect(resourceReadSpans[0]?.attrs).toMatchObject({
+				name: 'resource.read',
+				kind: 'gate_resource_read',
+				url: linked,
+				httpStatus: 200,
+			});
 
 			// totalMs is the root span's own duration.
 			expect(trace.totalMs).toBe(root.durMs);
@@ -1471,7 +1579,7 @@ export default async (env, input) => {
 		it('a plain no-network run has a trace with the host phases and no gate spans', async () => {
 			stubTargetFetch('<html>hi</html>');
 
-			const request = new IncomingRequest('http://example.com/api/run', {
+			const request = new IncomingRequest(`http://example.com${API_PREFIX}/run`, {
 				method: 'POST',
 				headers: { 'CF-Connecting-IP': '203.0.113.251' },
 				body: JSON.stringify({
@@ -1498,7 +1606,7 @@ export default async (env, input) => {
 		it('a transpile failure still carries a trace (root-only)', async () => {
 			stubTargetFetch('<html>hi</html>');
 
-			const request = new IncomingRequest('http://example.com/api/run', {
+			const request = new IncomingRequest(`http://example.com${API_PREFIX}/run`, {
 				method: 'POST',
 				headers: { 'CF-Connecting-IP': '203.0.113.252' },
 				body: JSON.stringify({
@@ -1522,7 +1630,7 @@ export default async (env, input) => {
 		});
 
 		it('a target-fetch failure carries a trace with root + an error target_fetch span', async () => {
-			const request = new IncomingRequest('http://example.com/api/run', {
+			const request = new IncomingRequest(`http://example.com${API_PREFIX}/run`, {
 				method: 'POST',
 				headers: { 'CF-Connecting-IP': '203.0.113.253' },
 				body: JSON.stringify({
@@ -1550,7 +1658,7 @@ export default async (env, input) => {
 	describe('fetch failure scenarios', () => {
 		it('returns fetch error when target URL fails', async () => {
 			const transformCode = 'export default (env, input) => input.status';
-			const request = new IncomingRequest('http://example.com/api/run', {
+			const request = new IncomingRequest(`http://example.com${API_PREFIX}/run`, {
 				method: 'POST',
 				body: JSON.stringify({
 					worker: { type: 'custom', customCode: transformCode },
@@ -1577,7 +1685,7 @@ export default async (env, input) => {
 
 	describe('response format', () => {
 		it('response has content-type application/json', async () => {
-			const request = new IncomingRequest('http://example.com/api/run', {
+			const request = new IncomingRequest(`http://example.com${API_PREFIX}/run`, {
 				method: 'POST',
 				body: JSON.stringify({
 					worker: { type: 'custom', customCode: 'export default () => 42' },
@@ -1592,7 +1700,7 @@ export default async (env, input) => {
 		});
 
 		it('includes timingMs in response', async () => {
-			const request = new IncomingRequest('http://example.com/api/run', {
+			const request = new IncomingRequest(`http://example.com${API_PREFIX}/run`, {
 				method: 'POST',
 				body: JSON.stringify({
 					worker: { type: 'custom', customCode: 'export default () => 42' },
@@ -1610,7 +1718,7 @@ export default async (env, input) => {
 
 		it('returns raw <script> tag as unmodified string in JSON (trust boundary)', async () => {
 			const transformCode = 'export default (env, input) => ({ script: "<script>alert(1)</script>" })';
-			const request = new IncomingRequest('http://example.com/api/run', {
+			const request = new IncomingRequest(`http://example.com${API_PREFIX}/run`, {
 				method: 'POST',
 				body: JSON.stringify({
 					worker: { type: 'custom', customCode: transformCode },
@@ -1634,18 +1742,23 @@ export default async (env, input) => {
 });
 
 describe('Static assets routing', () => {
-	it('GET / returns HTML (empirical: assets serve in vitest pool)', async () => {
-		// Empirical test to determine if @cloudflare/vitest-pool-workers serves static assets.
-		// The ASSETS binding with run_worker_first: ["/api/*"] should serve "/" before the Worker runs.
-		// If this test passes, assets ARE served locally in vitest; if it fails, they are NOT
-		// (then the serving is deploy/human-verified and documented in test-requirements.md).
-		const response = await SELF.fetch('http://example.com/');
+	// The standalone demo's index.html no longer exists at "/" — the demo is
+	// now embedded in blog post pages, not served as its own homepage. These
+	// assertions were dropped; in their place, verify the demo's assets
+	// (frontend bundle + a wasm module) are still served correctly by the
+	// ASSETS binding at their production root-relative paths (SELF here is
+	// the blog's router — worker/index.ts — which falls through to
+	// env.ASSETS.fetch() for non-/api/* requests).
+	it('GET /demos/dynamic-workers/app.js returns 200 with a JS content-type', async () => {
+		const response = await SELF.fetch(`http://example.com${ASSET_PREFIX}/app.js`);
 		expect(response.status).toBe(200);
-		const text = await response.text();
-		// Check for basic HTML structure (index.html should contain typical HTML tags)
-		expect(text).toMatch(/<html|<!DOCTYPE/i);
-		// The widget HTML should reference the app.js file or contain elements from index.html
-		expect(text.toLowerCase()).toMatch(/(app\.js|editor|example|widget)/);
+		expect(response.headers.get('content-type')).toMatch(/javascript/);
+	});
+
+	it('GET a wasm module asset returns 200 with a wasm content-type', async () => {
+		const response = await SELF.fetch(`http://example.com${ASSET_PREFIX}/modules/wasm-add/add.wasm`);
+		expect(response.status).toBe(200);
+		expect(response.headers.get('content-type')).toMatch(/wasm/);
 	});
 });
 
@@ -1662,17 +1775,16 @@ describe('POST /api/run — storage permission (storeId gate + StorageHost routi
 		setTurnstileVerifier(async () => ({ ok: false, errorCodes: ['reset'] }));
 	});
 
-	// No registered example currently carries a storage grant (feed-watcher is a
-	// later milestone), so the storage path is exercised through custom runs,
-	// whose request-supplied permissions are the effective grant.
+	// The storage path is exercised through custom runs here so the test can
+	// supply a minimal transform whose behavior is easy to assert.
 	const storageCode = `export default (env, input) => {
-		const n = (env.storage.get('count') ?? 0) + 1;
-		env.storage.put('count', n);
-		return { count: n };
+		env.DB.exec('CREATE TABLE IF NOT EXISTS counters (name TEXT PRIMARY KEY, value INTEGER NOT NULL)');
+		env.DB.exec("INSERT INTO counters VALUES ('runs', 1) ON CONFLICT(name) DO UPDATE SET value = value + 1");
+		return env.DB.exec("SELECT value FROM counters WHERE name = 'runs'").toArray()[0];
 	}`;
 
 	function runRequest(body: Record<string, unknown>, ip: string) {
-		return new IncomingRequest('http://example.com/api/run', {
+		return new IncomingRequest(`http://example.com${API_PREFIX}/run`, {
 			method: 'POST',
 			headers: { 'CF-Connecting-IP': ip },
 			body: JSON.stringify(body),
@@ -1819,7 +1931,7 @@ describe('POST /api/run — storage permission (storeId gate + StorageHost routi
 
 describe('DELETE /api/store handler', () => {
 	function storeRequest(body: unknown, ip: string, method = 'DELETE') {
-		return new IncomingRequest('http://example.com/api/store', {
+		return new IncomingRequest(`http://example.com${API_PREFIX}/store`, {
 			method,
 			headers: { 'CF-Connecting-IP': ip, 'content-type': 'application/json' },
 			body: body === undefined ? undefined : JSON.stringify(body),
@@ -1858,7 +1970,7 @@ describe('DELETE /api/store handler', () => {
 	});
 
 	it('returns 400 for malformed JSON body', async () => {
-		const request = new IncomingRequest('http://example.com/api/store', {
+		const request = new IncomingRequest(`http://example.com${API_PREFIX}/store`, {
 			method: 'DELETE',
 			headers: { 'CF-Connecting-IP': '203.0.113.163' },
 			body: 'not json',

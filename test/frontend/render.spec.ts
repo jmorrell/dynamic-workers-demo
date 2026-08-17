@@ -11,7 +11,11 @@ import {
 	buildCustomRunPayload,
 	bytesToBase64,
 	buildTraceLayout,
+	buildTraceAxisTicks,
+	formatTraceDuration,
 	tabStripItems,
+	LLM_PROMPT,
+	orderExamplesForPlayground,
 	type Example,
 	type EditorTab,
 	type TraceSpan,
@@ -98,6 +102,39 @@ describe('render helpers', () => {
 	});
 
 	describe('formatRunResponse', () => {
+		it('shows only the json value when a result also contains markdown', () => {
+			const response = {
+				ok: true,
+				result: {
+					markdown: '# A very long rendered document',
+					json: { title: 'Document title', wordCount: 42 },
+				},
+				logs: [],
+				logsTruncated: false,
+				timingMs: 100,
+				inputTruncated: false,
+			};
+			const formatted = formatRunResponse(response);
+			expect(formatted.body).toContain('Document title');
+			expect(formatted.body).toContain('wordCount');
+			expect(formatted.body).not.toContain('markdown');
+			expect(formatted.body).not.toContain('very long rendered document');
+		});
+
+		it('preserves direct-value results that do not have a json field', () => {
+			const response = {
+				ok: true,
+				result: { markdown: '# Legacy result', title: 'Still visible' },
+				logs: [],
+				logsTruncated: false,
+				timingMs: 100,
+				inputTruncated: false,
+			};
+			const formatted = formatRunResponse(response);
+			expect(formatted.body).toContain('Legacy result');
+			expect(formatted.body).toContain('Still visible');
+		});
+
 		it('formats successful response with ok result', () => {
 			const response = {
 				ok: true,
@@ -175,6 +212,26 @@ describe('render helpers', () => {
 		});
 	});
 
+	describe('orderExamplesForPlayground', () => {
+		const example = (id: string): Example => ({ id, title: id, description: id, suggestedUrls: [], source: 'code' });
+
+		it('leads with the showcase examples and retains every example', () => {
+			const ordered = orderExamplesForPlayground([
+				example('markdown'),
+				example('cpu-spin'),
+				example('arxiv-digest'),
+				example('arxiv-pdf'),
+				example('image-hash'),
+			]);
+			expect(ordered.map((item) => item.id)).toEqual(['arxiv-pdf', 'arxiv-digest', 'image-hash', 'markdown', 'cpu-spin']);
+		});
+
+		it('appends unknown future examples in their registry order', () => {
+			const ordered = orderExamplesForPlayground([example('future-b'), example('opengraph'), example('future-a')]);
+			expect(ordered.map((item) => item.id)).toEqual(['opengraph', 'future-b', 'future-a']);
+		});
+	});
+
 	describe('exampleTabs', () => {
 		it('returns a single script tab for an example with no modules', () => {
 			const example: Example = { id: '1', title: 'x', description: 'd', suggestedUrls: [], source: 'export default () => 1' };
@@ -187,19 +244,19 @@ describe('render helpers', () => {
 			expect(tabs).toEqual([{ id: 'script', label: 'transform.ts', kind: 'script', content: '' }]);
 		});
 
-		it('appends one tab per module, in order, with empty content when no contents map is supplied', () => {
+		it('appends one tab per module, using the wasm preview before the full module loads', () => {
 			const example: Example = {
 				id: '1',
 				title: 'x',
 				description: 'd',
 				suggestedUrls: [],
 				source: 'code',
-				modules: [{ name: 'add.wasm', kind: 'wasm', assetPath: '/modules/x/add.wasm' }],
+				modules: [{ name: 'add.wasm', kind: 'wasm', assetPath: '/modules/x/add.wasm', previewBase64: 'PREVIEW', byteSize: 2048 }],
 			};
 			const tabs = exampleTabs(example);
 			expect(tabs).toEqual([
 				{ id: 'script', label: 'transform.ts', kind: 'script', content: 'code' },
-				{ id: 'add.wasm', label: 'add.wasm', kind: 'wasm', content: '' },
+				{ id: 'add.wasm', label: 'add.wasm', kind: 'wasm', content: 'PREVIEW' },
 			]);
 		});
 
@@ -210,12 +267,27 @@ describe('render helpers', () => {
 				description: 'd',
 				suggestedUrls: [],
 				source: 'code',
-				modules: [{ name: 'add.wasm', kind: 'wasm', assetPath: '/modules/x/add.wasm' }],
+				modules: [{ name: 'add.wasm', kind: 'wasm', assetPath: '/modules/x/add.wasm', previewBase64: 'PREVIEW', byteSize: 2048 }],
 			};
 			const tabs = exampleTabs(example, new Map([['add.wasm', 'AAAA']]));
 			expect(tabs).toEqual([
 				{ id: 'script', label: 'transform.ts', kind: 'script', content: 'code' },
 				{ id: 'add.wasm', label: 'add.wasm', kind: 'wasm', content: 'AAAA' },
+			]);
+		});
+
+		it('shows JavaScript support modules as source tabs', () => {
+			const example: Example = {
+				id: '1',
+				title: 'x',
+				description: 'd',
+				suggestedUrls: [],
+				source: "import './polyfill';",
+				modules: [{ name: 'polyfill', label: 'polyfill.ts', kind: 'js', source: 'globalThis.ready = true;' }],
+			};
+			expect(exampleTabs(example)).toEqual([
+				{ id: 'script', label: 'transform.ts', kind: 'script', content: "import './polyfill';" },
+				{ id: 'polyfill', label: 'polyfill.ts', kind: 'script', content: 'globalThis.ready = true;' },
 			]);
 		});
 	});
@@ -228,7 +300,7 @@ describe('render helpers', () => {
 				description: 'd',
 				suggestedUrls: [],
 				source: 'code',
-				modules: [{ name: 'add.wasm', kind: 'wasm', assetPath: '/modules/x/add.wasm' }],
+				modules: [{ name: 'add.wasm', kind: 'wasm', assetPath: '/modules/x/add.wasm', previewBase64: 'PREVIEW', byteSize: 2048 }],
 			},
 			new Map([['add.wasm', 'AAAA']]),
 		);
@@ -277,7 +349,7 @@ describe('render helpers', () => {
 					description: 'd',
 					suggestedUrls: [],
 					source: 'code',
-					modules: [{ name: 'add.wasm', kind: 'wasm', assetPath: '/modules/x/add.wasm' }],
+					modules: [{ name: 'add.wasm', kind: 'wasm', assetPath: '/modules/x/add.wasm', previewBase64: 'PREVIEW', byteSize: 2048 }],
 				},
 				new Map([['add.wasm', 'AAAA']]),
 			);
@@ -288,6 +360,25 @@ describe('render helpers', () => {
 			expect(buildCustomRunPayload(tabs, current)).toEqual({
 				customCode: 'edited code',
 				modules: [{ name: 'add.wasm', kind: 'wasm', base64: 'AAAABB' }],
+			});
+		});
+
+		it('includes edited JavaScript support modules as source', () => {
+			const tabs = exampleTabs({
+				id: '1',
+				title: 'x',
+				description: 'd',
+				suggestedUrls: [],
+				source: "import './polyfill';",
+				modules: [{ name: 'polyfill', kind: 'js', source: 'original' }],
+			});
+			const current = new Map([
+				['script', "import './polyfill';"],
+				['polyfill', 'edited'],
+			]);
+			expect(buildCustomRunPayload(tabs, current)).toEqual({
+				customCode: "import './polyfill';",
+				modules: [{ name: 'polyfill', kind: 'js', source: 'edited' }],
 			});
 		});
 	});
@@ -349,15 +440,15 @@ describe('render helpers', () => {
 			expect(badge?.detail).toContain('2 hop(s)');
 		});
 
-		it('includes a max-fetches badge when maxFetches is present', () => {
-			expect(labels(permissionBadges({ fetch: 'page-links', maxFetches: 6 }))).toEqual(['net:network: page links', 'limit:max 6 fetches']);
+		it('includes a max-reads badge when maxFetches is present', () => {
+			expect(labels(permissionBadges({ fetch: 'page-links', maxFetches: 6 }))).toEqual(['net:network: page links', 'limit:max 6 reads']);
 		});
 
 		it('orders network · depth · fetches · cpu when all are present', () => {
 			expect(labels(permissionBadges({ fetch: 'page-links', fetchDepth: 2, maxFetches: 6, cpuMs: 500 }))).toEqual([
 				'net:network: page links',
 				'limit:link depth 2',
-				'limit:max 6 fetches',
+				'limit:max 6 reads',
 				'limit:cpu 500ms',
 			]);
 		});
@@ -418,7 +509,7 @@ describe('render helpers', () => {
 			const spans: Array<TraceSpan> = [
 				span({ spanId: 's1', attrs: { name: 'run' } }),
 				span({ spanId: 's2', parentSpanId: 's1', attrs: { name: 'loader' } }),
-				span({ spanId: 's3', parentSpanId: 's2', attrs: { name: 'env.fetch', kind: 'gate_fetch' } }),
+				span({ spanId: 's3', parentSpanId: 's2', attrs: { name: 'resource.read', kind: 'gate_resource_read' } }),
 			];
 			const rows = buildTraceLayout(spans, 100);
 			expect(rows.map((r) => r.depthLevel)).toEqual([0, 1, 2]);
@@ -459,14 +550,14 @@ describe('render helpers', () => {
 
 		it('tones a denied gate span as error even though its kind starts with gate_', () => {
 			const spans: Array<TraceSpan> = [
-				span({ spanId: 's1', status: 'error', attrs: { name: 'env.fetch', kind: 'gate_fetch', denied: 'not_allowlisted' } }),
+				span({ spanId: 's1', status: 'error', attrs: { name: 'resource.read', kind: 'gate_resource_read', denied: 'unknown capability' } }),
 			];
 			const rows = buildTraceLayout(spans, 100);
 			expect(rows[0].tone).toBe('error');
 		});
 
 		it('tones a successful gate span as ok', () => {
-			const spans: Array<TraceSpan> = [span({ spanId: 's1', status: 'ok', attrs: { name: 'env.fetch', kind: 'gate_fetch' } })];
+			const spans: Array<TraceSpan> = [span({ spanId: 's1', status: 'ok', attrs: { name: 'resource.read', kind: 'gate_resource_read' } })];
 			const rows = buildTraceLayout(spans, 100);
 			expect(rows[0].tone).toBe('ok');
 		});
@@ -477,13 +568,18 @@ describe('render helpers', () => {
 			expect(rows[0].tone).toBe('phase');
 		});
 
-		it('labels a gate span with the name plus the url tail, keeping the full url in detail', () => {
+		it('humanizes a resource span and labels it with a readable path, keeping the full URL in detail', () => {
 			const spans: Array<TraceSpan> = [
-				span({ spanId: 's1', attrs: { name: 'env.fetch', kind: 'gate_fetch', url: 'https://example.com/articles/foo' } }),
+				span({ spanId: 's1', attrs: { name: 'resource.read', kind: 'gate_resource_read', url: 'https://example.com/articles/foo' } }),
 			];
 			const rows = buildTraceLayout(spans, 100);
-			expect(rows[0].label).toBe('env.fetch foo');
+			expect(rows[0].label).toBe('Read /articles/foo');
 			expect(rows[0].detail).toContain('https://example.com/articles/foo');
+		});
+
+		it('formats a compact duration label for every row', () => {
+			const rows = buildTraceLayout([span({ spanId: 's1', durMs: 1250, attrs: { name: 'run' } })], 1250);
+			expect(rows[0].durationLabel).toBe('1.25 s');
 		});
 
 		it('falls back to spanId for the label when attrs.name is absent', () => {
@@ -505,7 +601,22 @@ describe('render helpers', () => {
 				span({ spanId: 's3', parentSpanId: 's1', attrs: { name: 'loader' } }),
 			];
 			const rows = buildTraceLayout(spans, 100);
-			expect(rows.map((r) => r.label)).toEqual(['run', 'target_fetch', 'loader']);
+			expect(rows.map((r) => r.label)).toEqual(['Run', 'Fetch input', 'Run worker']);
+		});
+	});
+
+	describe('trace time labels', () => {
+		it('formats sub-second and second durations compactly', () => {
+			expect(formatTraceDuration(0)).toBe('0 ms');
+			expect(formatTraceDuration(42)).toBe('42 ms');
+			expect(formatTraceDuration(1250)).toBe('1.25 s');
+		});
+
+		it('builds a five-tick axis spanning the full trace duration', () => {
+			const ticks = buildTraceAxisTicks(1000);
+			expect(ticks.map((tick) => tick.leftPct)).toEqual([0, 25, 50, 75, 100]);
+			expect(ticks.map((tick) => tick.label)).toEqual(['0 ms', '250 ms', '500 ms', '750 ms', '1.00 s']);
+			expect(ticks.map((tick) => tick.align)).toEqual(['start', 'middle', 'middle', 'middle', 'end']);
 		});
 	});
 
@@ -528,6 +639,23 @@ describe('render helpers', () => {
 		it('ignores hasTrace before a run', () => {
 			const items = tabStripItems(sourceTabs, 'script', null, { hasRun: false, hasTrace: true });
 			expect(shape(items)).toEqual(['source:script*', 'source:add.wasm']);
+		});
+
+		it('can show the LLM prompt before a run', () => {
+			const items = tabStripItems(sourceTabs, 'script', null, { hasRun: false, hasTrace: false, hasPrompt: true });
+			expect(shape(items)).toEqual(['source:script*', 'source:add.wasm', 'result:prompt']);
+		});
+
+		it('keeps the prompt before run result tabs', () => {
+			const items = tabStripItems(sourceTabs, 'script', 'prompt', { hasRun: true, hasTrace: true, hasPrompt: true });
+			expect(shape(items)).toEqual([
+				'source:script',
+				'source:add.wasm',
+				'result:prompt*',
+				'result:output',
+				'result:logs',
+				'result:trace',
+			]);
 		});
 
 		it('appends Output and Logs once a run exists, keeping the source tab active', () => {
@@ -553,6 +681,20 @@ describe('render helpers', () => {
 		it('activates the active source tab (not any result tab) when no result tab is selected', () => {
 			const items = tabStripItems(sourceTabs, 'add.wasm', null, { hasRun: true, hasTrace: true });
 			expect(shape(items)).toEqual(['source:script', 'source:add.wasm*', 'result:output', 'result:logs', 'result:trace']);
+		});
+	});
+
+	describe('LLM_PROMPT', () => {
+		it('contains the transform contract, capabilities, and important limits', () => {
+			expect(LLM_PROMPT).toContain('ask me what I want to build and wait for my answer');
+			expect(LLM_PROMPT).toContain('Do not write any code until I have supplied that direction');
+			expect(LLM_PROMPT).toContain("import type { RunInput, TransformEnv } from '../runtime/types'");
+			expect(LLM_PROMPT).toContain('type TransformEnv');
+			expect(LLM_PROMPT).toContain('type ResourceCapability');
+			expect(LLM_PROMPT).toContain('type Database');
+			expect(LLM_PROMPT).toContain('Never call global fetch()');
+			expect(LLM_PROMPT).toContain('at most 2 link levels and 6 reads');
+			expect(LLM_PROMPT).toContain('capped at 128 KiB');
 		});
 	});
 });

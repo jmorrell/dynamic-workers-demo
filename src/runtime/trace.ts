@@ -2,7 +2,7 @@
  * Per-invocation trace for the run's `trace` response field: a lightweight
  * waterfall — a root `run` span, host phase spans (target fetch, loader
  * create/invoke, log read), and, nested under the loader span, one span per
- * gate call (env.fetch/env.fetchFile) including denied attempts as error
+ * resource capability read, including denied attempts as error
  * spans. Deliberately NOT OTel-conformant — just enough shape for a waterfall
  * UI. Nothing here is stored; it's assembled fresh per run and returned
  * inline, same ephemerality as captured logs.

@@ -1,4 +1,4 @@
-import { STORE_MAX_BYTES, STORE_MAX_KEY_BYTES, STORE_MAX_KEYS, STORE_MAX_VALUE_BYTES } from './core';
+import { STORE_MAX_BYTES } from './core';
 
 /**
  * HARNESS_SOURCE is the harness module as a string that will be compiled
@@ -11,11 +11,11 @@ import { STORE_MAX_BYTES, STORE_MAX_KEY_BYTES, STORE_MAX_KEYS, STORE_MAX_VALUE_B
  *  - a `StorageHarness` Durable Object class (the storage run path; the
  *    `StorageHost` supervisor mounts it as a facet and RPCs `run(input)` — see
  *    src/runtime/storage-host.ts). Its `run` does exactly what the default
- *    entrypoint does PLUS exposes `env.storage` backed by the facet's OWN
- *    isolated SQLite DB (`this.ctx.storage.kv`), which is the isolation boundary.
+ *    entrypoint does PLUS exposes `env.DB` backed by the facet's OWN isolated
+ *    SQLite database (`this.ctx.storage.sql`), which is the isolation boundary.
  *
  * The store cap constants are interpolated from core.ts so there is a single
- * source of truth for the numbers; the CAP LOGIC (checkStorageWrite) and the
+ * source of truth for the number; the CAP LOGIC (checkDatabaseSize) and the
  * error classifier are inlined by hand — SYNC PARTNER with core.ts.
  */
 export const HARNESS_SOURCE = `
@@ -70,17 +70,35 @@ async function invokeTransform(userEnv, input) {
   }
 }
 
-// Builds the { fetch, fetchFile } half of userEnv from the CapabilityGate
-// loopback the loader attaches under a page-links grant (env.GATE). Empty when
-// no gate is attached. Shared by both run paths so fetch+storage grants compose.
+// Builds target-bound resource capabilities from opaque grants. User code gets
+// zero-argument read() closures, never the gate or a method accepting a URL.
+// Text results recursively wrap their newly minted child grants, making
+// transitive authority explicit in the returned document rather than growing a
+// magical global fetch allowlist.
 function gateCapabilities(env) {
   const gate = env && env.GATE;
-  return gate
-    ? {
-        fetch: (url) => gate.fetchText(url),
-        fetchFile: (url) => gate.fetchFile(url),
-      }
-    : {};
+  const initialGrants = env && env.RESOURCE_GRANTS;
+  if (!gate || !Array.isArray(initialGrants)) return {};
+
+  function wrapResources(grants) {
+    const resources = new Map();
+    for (const grant of grants) {
+      const capability = Object.freeze({
+        url: grant.url,
+        source: grant.source,
+        async read() {
+          const result = await gate.readResource(grant.id);
+          return result.kind === 'text'
+            ? { ...result, resources: wrapResources(result.resources) }
+            : result;
+        },
+      });
+      resources.set(grant.url, capability);
+    }
+    return resources;
+  }
+
+  return { resources: wrapResources(initialGrants) };
 }
 
 export default class Harness extends WorkerEntrypoint {
@@ -89,10 +107,9 @@ export default class Harness extends WorkerEntrypoint {
   // make a second run of identical code reuse the first run's stale input.
   async run(input) {
     // Build the capability object handed to the transform as its FIRST argument.
-    // Empty by default (no network). When the loader attached the CapabilityGate
-    // loopback (fetch permission), expose fetch/fetchFile that proxy to the host
-    // gate. A gate rejection throws and surfaces as a normal transform error
-    // unless the transform catches it.
+    // Empty by default (no network). Under a page-links grant, expose only the
+    // target-bound resource map built above. A gate rejection throws and
+    // surfaces as a normal transform error unless the transform catches it.
     const userEnv = gateCapabilities(this.env);
     return invokeTransform(userEnv, input);
   }
@@ -101,63 +118,50 @@ export default class Harness extends WorkerEntrypoint {
 // Storage run path: mounted as a DO facet by the StorageHost supervisor. Its
 // ctx.storage targets the facet's OWN isolated SQLite DB — the whole isolation
 // story (hostile code can only trash its own facet). run(input) mirrors the
-// default entrypoint plus an env.storage wrapper over ctx.storage.kv.
+// default entrypoint plus an env.DB wrapper over ctx.storage.sql.
 export class StorageHarness extends DurableObject {
   async run(input) {
     const userEnv = gateCapabilities(this.env);
-    userEnv.storage = this._buildStorage();
+    userEnv.DB = this._buildDatabase();
     return invokeTransform(userEnv, input);
   }
 
-  // env.storage: get/put/delete/list over the facet's own kv, JSON-encoding
-  // values (plain data only) and enforcing the caps. SYNC PARTNER: the cap
-  // ordering/logic mirrors core.ts checkStorageWrite; the numeric limits are
-  // interpolated from core.ts constants (single source of truth).
-  _buildStorage() {
-    const kv = this.ctx.storage.kv;
+  // env.DB: arbitrary SQLite over the facet's own database. Each exec is
+  // materialized inside a synchronous transaction. If it grows the database
+  // past the cap, throwing rolls back the whole query. Queries that do not grow
+  // the database remain available so user code can clean up an over-full DB.
+  // SYNC PARTNER: mirrors core.ts checkDatabaseSize.
+  _buildDatabase() {
+    const storage = this.ctx.storage;
     const sql = this.ctx.storage.sql;
-    const enc = new TextEncoder();
-    const countKeys = () => {
-      let n = 0;
-      for (const _ of kv.list()) n++;
-      return n;
-    };
     return {
-      get(key) {
-        const raw = kv.get(String(key));
-        return raw === undefined ? undefined : JSON.parse(raw);
+      get databaseSize() {
+        return sql.databaseSize;
       },
-      put(key, value) {
-        const k = String(key);
-        const serialized = JSON.stringify(value);
-        if (serialized === undefined) {
-          throw new Error('env.storage.put: value must be JSON-serializable plain data');
-        }
-        // Hard backstop first (authoritative — includes SQLite overhead), then
-        // the per-op advisory caps. Mirrors core.ts checkStorageWrite order.
-        const dbSize = sql.databaseSize;
-        if (dbSize >= ${STORE_MAX_BYTES}) {
-          throw new Error('env.storage.put denied: storage full: ${STORE_MAX_BYTES}-byte database cap reached');
-        }
-        if (enc.encode(k).length > ${STORE_MAX_KEY_BYTES}) {
-          throw new Error('env.storage.put denied: storage key exceeds ${STORE_MAX_KEY_BYTES}-byte limit');
-        }
-        if (enc.encode(serialized).length > ${STORE_MAX_VALUE_BYTES}) {
-          throw new Error('env.storage.put denied: storage value exceeds ${STORE_MAX_VALUE_BYTES}-byte limit');
-        }
-        const exists = kv.get(k) !== undefined;
-        if (!exists && countKeys() >= ${STORE_MAX_KEYS}) {
-          throw new Error('env.storage.put denied: storage key count exceeds ${STORE_MAX_KEYS}-key limit');
-        }
-        kv.put(k, serialized);
-      },
-      delete(key) {
-        return kv.delete(String(key));
-      },
-      list() {
-        const out = [];
-        for (const [k] of kv.list()) out.push(k);
-        return out;
+      exec(query, ...bindings) {
+        const databaseSizeBefore = sql.databaseSize;
+        return storage.transactionSync(() => {
+          const cursor = sql.exec(String(query), ...bindings);
+          const rows = cursor.toArray();
+          const result = {
+            columnNames: [...cursor.columnNames],
+            rowsRead: cursor.rowsRead,
+            rowsWritten: cursor.rowsWritten,
+            toArray() {
+              return rows;
+            },
+          };
+          const databaseSizeAfter = sql.databaseSize;
+          if (
+            databaseSizeAfter > ${STORE_MAX_BYTES} &&
+            databaseSizeAfter > databaseSizeBefore
+          ) {
+            throw new Error(
+              'env.DB.exec denied: database full: ${STORE_MAX_BYTES}-byte limit exceeded',
+            );
+          }
+          return result;
+        });
       },
     };
   }

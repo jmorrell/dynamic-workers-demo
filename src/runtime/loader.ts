@@ -1,5 +1,5 @@
 import { classifyLoaderError, clampCpuMs, clampFetchDepth, clampMaxFetches, hashCode } from './core';
-import type { Permissions, RunInput, RunResult } from './types';
+import type { Permissions, ResourceGrant, RunInput, RunResult } from './types';
 import { HARNESS_SOURCE } from './harness-source';
 
 /** CPU limit for sandboxed worker code execution (in milliseconds) */
@@ -13,15 +13,16 @@ export const CPU_LIMIT_MS = 50;
  * - `wasmModules` — wasm binaries injected alongside the code, keyed by the
  *   exact relative-import specifier's resolved key (e.g. 'add.wasm').
  * - `permissions` — capability grant; drives `limits.cpuMs` and gate attachment.
- * - `allowedUrls` — URLs referenced by the fetched page; required when
- *   `permissions.fetch === 'page-links'`, passed to the gate as props.
+ * - `initialResources` — opaque grants for URLs referenced by the fetched page;
+ *   required when `permissions.fetch === 'page-links'`, passed to the gate and
+ *   harness as plain descriptors.
  */
 export type RunOptions = {
 	readonly compatDate?: string;
 	readonly extraModules?: Readonly<Record<string, string>>;
 	readonly wasmModules?: Readonly<Record<string, Uint8Array>>;
 	readonly permissions?: Permissions;
-	readonly allowedUrls?: ReadonlyArray<string>;
+	readonly initialResources?: ReadonlyArray<ResourceGrant>;
 };
 
 // Default compatibility date for Dynamic Workers running arbitrary (non-example)
@@ -38,7 +39,7 @@ export const DEFAULT_COMPAT_DATE = '2026-06-22';
 export type LoaderExports = {
 	LogTailer: (o: { props: { runId: string } }) => Fetcher;
 	CapabilityGate: (o: {
-		props: { runId: string; allowedUrls: ReadonlyArray<string>; fetchDepth: number; maxFetches: number };
+		props: { runId: string; initialResources: ReadonlyArray<ResourceGrant>; fetchDepth: number; maxFetches: number };
 	}) => Fetcher;
 };
 
@@ -60,7 +61,7 @@ export function buildWorkerCode(
 	exportsObj: Cloudflare.Exports,
 	opts: RunOptions,
 ): WorkerLoaderWorkerCode {
-	const { compatDate = DEFAULT_COMPAT_DATE, extraModules, wasmModules, permissions, allowedUrls } = opts;
+	const { compatDate = DEFAULT_COMPAT_DATE, extraModules, wasmModules, permissions, initialResources } = opts;
 
 	// LOADER_COMPAT_DATE is a test-only override (set in vitest.config.mts): the
 	// local workerd binary hard-errors loading a Dynamic Worker dated past its
@@ -107,13 +108,17 @@ export function buildWorkerCode(
 					GATE: exports.CapabilityGate({
 						props: {
 							runId,
-							allowedUrls: allowedUrls ?? [],
+							initialResources: initialResources ?? [],
 							fetchDepth: clampFetchDepth(permissions.fetchDepth),
 							maxFetches: clampMaxFetches(permissions.maxFetches),
 						},
 					}),
 				}
 			: {};
+
+	if (permissions?.fetch === 'page-links') {
+		workerEnv.RESOURCE_GRANTS = initialResources ?? [];
+	}
 
 	// subRequests mirrors the granted maxFetches (host-side gate tally and this
 	// sandbox-side platform limit must stay in lockstep) — but only under a

@@ -41,6 +41,28 @@ function testInput(): RunInput {
 }
 
 describe('StorageHost (vitest pool)', () => {
+	it('databaseSize reflects page growth before a transactionSync callback commits', async () => {
+		const stub = env.STORAGE_HOST.get(
+			env.STORAGE_HOST.idFromName('database-size-in-transaction'),
+		);
+		await runInDurableObject(stub, async (_instance: StorageHost, state) => {
+			const before = state.storage.sql.databaseSize;
+			let inside = before;
+
+			expect(() =>
+				state.storage.transactionSync(() => {
+					state.storage.sql.exec('CREATE TABLE quota_probe (payload BLOB NOT NULL)');
+					state.storage.sql.exec('INSERT INTO quota_probe VALUES (zeroblob(?))', 256 * 1024);
+					inside = state.storage.sql.databaseSize;
+					throw new Error('roll back quota probe');
+				}),
+			).toThrow('roll back quota probe');
+
+			expect(inside).toBeGreaterThan(before);
+			expect(state.storage.sql.databaseSize).toBe(before);
+		});
+	});
+
 	describe('facets-absence guard', () => {
 		it('pins ctx.facets === undefined in the vitest pool', async () => {
 			// Guard test (adapted from the throwaway facets spike): the pool's

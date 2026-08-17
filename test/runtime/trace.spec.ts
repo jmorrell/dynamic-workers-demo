@@ -102,8 +102,8 @@ describe('trace.ts', () => {
 
 			tracer.addExternalSpans(
 				[
-					{ startAbsMs: 1050, endAbsMs: 1080, status: 'ok', attrs: { name: 'env.fetch', url: 'https://a' } },
-					{ startAbsMs: 1090, endAbsMs: 1090, status: 'error', attrs: { name: 'env.fetch', url: 'https://b', denied: 'nope' } },
+					{ startAbsMs: 1050, endAbsMs: 1080, status: 'ok', attrs: { name: 'resource.read', url: 'https://a' } },
+					{ startAbsMs: 1090, endAbsMs: 1090, status: 'error', attrs: { name: 'resource.read', url: 'https://b', denied: 'nope' } },
 				],
 				parentId,
 			);

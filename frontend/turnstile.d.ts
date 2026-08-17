@@ -4,12 +4,12 @@
 interface TurnstileWidget {
 	/**
 	 * Render the Turnstile widget on a container element
-	 * @param containerId CSS selector for the container element
+	 * @param container CSS selector for, or reference to, the container element
 	 * @param options Configuration options for the widget
 	 * @returns The widget ID
 	 */
 	render(
-		containerId: string,
+		container: string | HTMLElement,
 		options: {
 			sitekey: string;
 			theme?: 'light' | 'dark';

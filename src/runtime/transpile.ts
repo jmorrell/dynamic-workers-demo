@@ -14,6 +14,7 @@ export type TranspileResult = { type: 'success'; code: string } | { type: 'failu
 export function transpileUserCode(source: string): TranspileResult {
 	try {
 		const result = transform(source, { transforms: ['typescript'], disableESTransforms: true });
+		console.log(result);
 		return { type: 'success', code: result.code };
 	} catch (err) {
 		const message = err instanceof Error ? err.message : String(err);

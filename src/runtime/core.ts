@@ -106,39 +106,25 @@ export function deriveStoreKey(worker: { type: 'example'; exampleId: string } | 
 	return worker.type === 'example' ? worker.exampleId : `custom:${worker.codeHash}`;
 }
 
-/** Advisory + hard caps for a run's `env.storage` facet. See harness-source.ts (SYNC PARTNER). */
-export const STORE_MAX_KEY_BYTES = 256;
-export const STORE_MAX_VALUE_BYTES = 8 * 1024; // 8 KiB (JSON-serialized value)
-export const STORE_MAX_KEYS = 200;
-export const STORE_MAX_BYTES = 5 * 1024 * 1024; // 5 MiB hard backstop (facet databaseSize)
+/** Deliberately tiny demo quotas for a run's private SQLite facet. */
+export const STORE_MAX_BYTES = 128 * 1024;
 
 /**
- * Pure quota gate for a single `env.storage.put`, checked in order: the hard
- * `databaseSize` backstop first (authoritative, includes SQLite overhead), then
- * the per-op advisory caps. Returns `{ ok: true }` or a human-readable rejection.
+ * Pure quota gate for a query against `env.DB`. A transaction may modify pages
+ * while remaining the same size, and cleanup queries must remain possible even
+ * for an already-oversized database. We therefore reject only growth that ends
+ * beyond the cap. Throwing inside transactionSync rolls that query back.
  *
  * SYNC PARTNER: the harness (src/runtime/harness-source.ts) inlines this exact
  * logic (with the constants above interpolated) because it runs inside the
  * loaded worker where core.ts isn't importable. Change both together.
  */
-export function checkStorageWrite(p: {
-	keyByteLength: number;
-	valueByteLength: number;
-	currentKeyCount: number;
-	keyAlreadyExists: boolean;
-	databaseSize: number;
+export function checkDatabaseSize(p: {
+	databaseSizeBefore: number;
+	databaseSizeAfter: number;
 }): { ok: true } | { ok: false; message: string } {
-	if (p.databaseSize >= STORE_MAX_BYTES) {
-		return { ok: false, message: `storage full: ${STORE_MAX_BYTES}-byte database cap reached` };
-	}
-	if (p.keyByteLength > STORE_MAX_KEY_BYTES) {
-		return { ok: false, message: `storage key exceeds ${STORE_MAX_KEY_BYTES}-byte limit` };
-	}
-	if (p.valueByteLength > STORE_MAX_VALUE_BYTES) {
-		return { ok: false, message: `storage value exceeds ${STORE_MAX_VALUE_BYTES}-byte limit` };
-	}
-	if (!p.keyAlreadyExists && p.currentKeyCount >= STORE_MAX_KEYS) {
-		return { ok: false, message: `storage key count exceeds ${STORE_MAX_KEYS}-key limit` };
+	if (p.databaseSizeAfter > STORE_MAX_BYTES && p.databaseSizeAfter > p.databaseSizeBefore) {
+		return { ok: false, message: `database full: ${STORE_MAX_BYTES}-byte limit exceeded` };
 	}
 	return { ok: true };
 }
@@ -160,10 +146,10 @@ export function selectEvictions(entries: ReadonlyArray<{ key: string; lastUsed: 
 		.map((e) => e.key);
 }
 
-/** Hard bounds for a custom run's declared wasm modules. */
+/** Hard bounds for a custom run's declared source and wasm modules. */
 export const MAX_CUSTOM_MODULES = 4;
 export const MAX_MODULE_BYTES = 8 * 1024 * 1024; // 8 MiB
-const CUSTOM_MODULE_NAME_RE = /^[A-Za-z0-9._-]+\.wasm$/;
+const CUSTOM_MODULE_NAME_RE = /^[A-Za-z0-9._-]+$/;
 
 /**
  * Decodes a base64 string to bytes, or null if it isn't valid base64. Pure
@@ -182,19 +168,23 @@ export function decodeBase64(base64: string): Uint8Array | null {
 
 /**
  * Validates and decodes a custom run's `worker.modules` field (untrusted
- * request input): at most `MAX_CUSTOM_MODULES` entries, each with a `.wasm`
- * name (not shadowing `harness.js`/`user.js`) matching `CUSTOM_MODULE_NAME_RE`,
- * valid base64, decoding to at most `MAX_MODULE_BYTES`. Returns the decoded
- * bytes keyed by module name, or a human-readable rejection reason.
+ * request input): at most `MAX_CUSTOM_MODULES` entries, with safe names that
+ * cannot shadow the harness or entrypoint. JS source and decoded wasm bytes
+ * are each capped at `MAX_MODULE_BYTES`.
  */
-export function validateCustomModules(value: unknown): { ok: true; modules: Record<string, Uint8Array> } | { ok: false; message: string } {
+export function validateCustomModules(
+	value: unknown,
+):
+	| { ok: true; jsModules: Record<string, string>; wasmModules: Record<string, Uint8Array> }
+	| { ok: false; message: string } {
 	if (!Array.isArray(value)) return { ok: false, message: 'modules must be an array' };
 	if (value.length > MAX_CUSTOM_MODULES) return { ok: false, message: `modules must contain at most ${MAX_CUSTOM_MODULES} entries` };
 
-	const modules: Record<string, Uint8Array> = {};
+	const jsModules: Record<string, string> = {};
+	const wasmModules: Record<string, Uint8Array> = {};
 	for (const entry of value) {
 		if (typeof entry !== 'object' || entry === null) return { ok: false, message: 'each module must be an object' };
-		const { name, kind, base64 } = entry as Record<string, unknown>;
+		const { name, kind, source, base64 } = entry as Record<string, unknown>;
 
 		if (typeof name !== 'string' || !CUSTOM_MODULE_NAME_RE.test(name)) {
 			return { ok: false, message: `invalid module name: ${String(name)}` };
@@ -202,8 +192,21 @@ export function validateCustomModules(value: unknown): { ok: true; modules: Reco
 		if (name === 'harness.js' || name === 'user.js') {
 			return { ok: false, message: `module name may not be "${name}"` };
 		}
+		if (kind === 'js') {
+			if (typeof source !== 'string') {
+				return { ok: false, message: `module "${name}" is missing source content` };
+			}
+			if (new TextEncoder().encode(source).byteLength > MAX_MODULE_BYTES) {
+				return { ok: false, message: `module "${name}" exceeds the ${MAX_MODULE_BYTES}-byte cap` };
+			}
+			jsModules[name] = source;
+			continue;
+		}
 		if (kind !== 'wasm') {
 			return { ok: false, message: `unsupported module kind: ${String(kind)}` };
+		}
+		if (!name.endsWith('.wasm')) {
+			return { ok: false, message: `wasm module name must end in .wasm: ${name}` };
 		}
 		if (typeof base64 !== 'string') {
 			return { ok: false, message: `module "${name}" is missing base64 content` };
@@ -213,10 +216,10 @@ export function validateCustomModules(value: unknown): { ok: true; modules: Reco
 		if (!bytes) return { ok: false, message: `module "${name}" has invalid base64 content` };
 		if (bytes.byteLength > MAX_MODULE_BYTES) return { ok: false, message: `module "${name}" exceeds the ${MAX_MODULE_BYTES}-byte cap` };
 
-		modules[name] = bytes;
+		wasmModules[name] = bytes;
 	}
 
-	return { ok: true, modules };
+	return { ok: true, jsModules, wasmModules };
 }
 
 /**

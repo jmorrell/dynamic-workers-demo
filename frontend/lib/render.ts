@@ -11,7 +11,16 @@ export type Permissions = {
 // `assetPath` is a URL path served (asset-first) by the same origin, e.g.
 // '/modules/image-hash/photon.wasm' — module bytes are fetched lazily per
 // example from there, see ensureModules in main.ts.
-export type ExampleModule = { readonly name: string; readonly kind: 'wasm'; readonly assetPath: string };
+export type ExampleModule =
+	| { readonly name: string; readonly label?: string; readonly kind: 'js'; readonly source: string }
+	| {
+			readonly name: string;
+			readonly label?: string;
+			readonly kind: 'wasm';
+			readonly assetPath: string;
+			readonly previewBase64: string;
+			readonly byteSize: number;
+	  };
 
 export type Example = {
 	readonly id: string;
@@ -23,22 +32,49 @@ export type Example = {
 	readonly modules?: ReadonlyArray<ExampleModule>;
 };
 
-// A single editor tab: the script tab (id 'script', kind 'script') or a wasm
-// module tab (id/label = module name, kind 'wasm', content = base64 text).
+// Playground order is intentionally showcase-first rather than tutorial-first:
+// lead with the examples that best demonstrate the finished system, then keep
+// every remaining/future registry entry in its original order.
+const PLAYGROUND_EXAMPLE_ORDER = [
+	'arxiv-pdf',
+	'arxiv-digest',
+	'image-hash',
+	'rss-digest',
+	'markdown',
+	'github-repo',
+	'url-history',
+	'opengraph',
+	'hackernews',
+	'wasm-add',
+	'blocked-fetch',
+	'cpu-spin',
+	'write-your-own',
+] as const;
+
+export function orderExamplesForPlayground(examples: ReadonlyArray<Example>): Array<Example> {
+	const rank = new Map<string, number>(PLAYGROUND_EXAMPLE_ORDER.map((id, index) => [id, index]));
+	return examples
+		.map((example, index) => ({ example, index }))
+		.sort((a, b) => (rank.get(a.example.id) ?? Number.MAX_SAFE_INTEGER) - (rank.get(b.example.id) ?? Number.MAX_SAFE_INTEGER) || a.index - b.index)
+		.map(({ example }) => example);
+}
+
+// A single editor tab: the entrypoint/support source tabs use kind 'script';
+// wasm tabs use kind 'wasm' and contain preview or full base64 text.
 export type EditorTab = { readonly id: string; readonly label: string; readonly kind: 'script' | 'wasm'; readonly content: string };
 
 // Builds the pristine tab set for a selected example: the script tab first
 // (label 'transform.ts'), then one tab per declared module. No example (or no
 // modules) yields just the script tab. Module content comes from
 // `moduleContents` (keyed by module name) when supplied — the base64 is
-// fetched lazily (see ensureModules in main.ts) — or '' before it loads.
+// fetched lazily (see ensureModules in widget.ts) — or the 1.5 KiB preview.
 export function exampleTabs(example: Example | undefined, moduleContents?: ReadonlyMap<string, string>): Array<EditorTab> {
 	const scriptTab: EditorTab = { id: 'script', label: 'transform.ts', kind: 'script', content: example?.source ?? '' };
 	const moduleTabs: Array<EditorTab> = (example?.modules ?? []).map((m) => ({
 		id: m.name,
-		label: m.name,
-		kind: 'wasm',
-		content: moduleContents?.get(m.name) ?? '',
+		label: m.label ?? m.name,
+		kind: m.kind === 'wasm' ? 'wasm' : 'script',
+		content: m.kind === 'js' ? m.source : (moduleContents?.get(m.name) ?? m.previewBase64),
 	}));
 	return [scriptTab, ...moduleTabs];
 }
@@ -66,9 +102,87 @@ export function bytesToBase64(bytes: Uint8Array): string {
 	return btoa(binary);
 }
 
-// The result panes that appear after a run, in strip order. 'trace' is only
-// present when the run actually carried spans (see tabStripItems).
-export type ResultTabId = 'output' | 'logs' | 'trace';
+// Auxiliary/result panes in strip order. The prompt can appear before a run;
+// run results appear afterward, and 'trace' only when the run carried spans.
+export type ResultTabId = 'prompt' | 'output' | 'logs' | 'trace';
+
+export const LLM_PROMPT = `You are writing a TypeScript module that will run as untrusted code inside a sandboxed Cloudflare Dynamic Worker.
+
+First, check whether I have described what I want the transform to do in my message. If I have not, ask me what I want to build and wait for my answer. Do not write any code until I have supplied that direction.
+
+Once I have described the transform, return only the complete contents of transform.ts, without Markdown fences or explanation.
+
+The module must default-export:
+import type { RunInput, TransformEnv } from '../runtime/types';
+
+export default async function transform(
+  env: TransformEnv,
+  input: RunInput,
+): Promise<unknown> | unknown
+
+Types:
+type RunInput = {
+  url: string;
+  finalUrl: string;
+  status: number;
+  contentType: string;
+  responseHeaders: Map<string, string>;
+  body: string;
+  truncated: boolean;
+};
+
+type TransformEnv = {
+  resources?: ReadonlyMap<string, ResourceCapability>;
+  DB?: Database;
+};
+
+type ResourceCapability = {
+  url: string;
+  source: { kind: "html"; element: string; attribute: string } | { kind: "text" };
+  read(): Promise<ResourceResult>;
+};
+
+type ResourceResult =
+  | {
+      kind: "text";
+      status: number;
+      contentType: string;
+      body: string;
+      truncated: boolean;
+      resources: ReadonlyMap<string, ResourceCapability>;
+    }
+  | {
+      kind: "bytes";
+      status: number;
+      contentType: string;
+      bytes: Uint8Array;
+      truncated: boolean;
+    };
+
+type Database = {
+  readonly databaseSize: number;
+  exec<Row extends Record<string, unknown> = Record<string, unknown>>(
+    query: string,
+    ...bindings: unknown[]
+  ): {
+    columnNames: string[];
+    rowsRead: number;
+    rowsWritten: number;
+    toArray(): Row[];
+  };
+};
+
+Runtime constraints:
+- There is no ambient fetch. Never call global fetch().
+- A URL can only be read if env.resources contains its ResourceCapability. Call capability.read() with no arguments.
+- Text reads may return child capabilities in result.resources. This run permits at most 2 link levels and 6 reads.
+- env.DB is a private SQLite database for this script, capped at 128 KiB.
+- The transform has at most 5000ms of CPU time.
+- No npm packages are available. Apart from the type-only import shown above, use built-in JavaScript and TypeScript APIs.
+- console.log(), console.warn(), and console.error() are captured.
+- input.body is the already-fetched target document. Use input.finalUrl as its base URL.
+- Return JSON-serializable data, or { markdown: string, json?: unknown } to render Markdown.
+- Check missing capabilities, HTTP status, result.kind, content type, and truncation where relevant.`;
 
 // One entry in the single unified tab strip: the source-file tabs (the script
 // tab + any wasm module tabs) followed by the result tabs a run produced. `id`
@@ -81,16 +195,16 @@ export type TabStripItem = {
 	readonly active: boolean;
 };
 
-// Builds the unified strip: every source tab first (in the given order), then —
-// once a run exists — Output and Logs, and Trace only when that run carried
-// spans. Exactly one item is active: the active result tab when one is showing
+// Builds the unified strip: every source tab first (in the given order), an
+// optional pre-run LLM prompt, then — once a run exists — Output and Logs, and
+// Trace only when that run carried spans. Exactly one item is active: the active result tab when one is showing
 // (`activeResultTab` non-null), otherwise the active source tab. So a result
 // tab being active necessarily leaves every source item inactive, and vice versa.
 export function tabStripItems(
 	sourceTabs: ReadonlyArray<EditorTab>,
 	activeSourceTabId: string,
 	activeResultTab: ResultTabId | null,
-	options: { readonly hasRun: boolean; readonly hasTrace: boolean },
+	options: { readonly hasRun: boolean; readonly hasTrace: boolean; readonly hasPrompt?: boolean },
 ): Array<TabStripItem> {
 	const items: Array<TabStripItem> = sourceTabs.map((tab) => ({
 		id: tab.id,
@@ -98,6 +212,10 @@ export function tabStripItems(
 		kind: 'source' as const,
 		active: activeResultTab === null && tab.id === activeSourceTabId,
 	}));
+
+	if (options.hasPrompt) {
+		items.push({ id: 'prompt', label: 'LLM prompt', kind: 'result', active: activeResultTab === 'prompt' });
+	}
 
 	if (options.hasRun) {
 		const resultTabs: Array<{ id: ResultTabId; label: string }> = [
@@ -114,7 +232,9 @@ export function tabStripItems(
 	return items;
 }
 
-export type CustomRunModule = { readonly name: string; readonly kind: 'wasm'; readonly base64: string };
+export type CustomRunModule =
+	| { readonly name: string; readonly kind: 'js'; readonly source: string }
+	| { readonly name: string; readonly kind: 'wasm'; readonly base64: string };
 
 // Builds the { customCode, modules? } payload shape for a dirty (or no-example)
 // custom run from the current tab contents. Wasm tab text has its whitespace
@@ -124,17 +244,17 @@ export function buildCustomRunPayload(
 	tabs: ReadonlyArray<EditorTab>,
 	currentContents: ReadonlyMap<string, string>,
 ): { customCode: string; modules?: Array<CustomRunModule> } {
-	const scriptTab = tabs.find((t) => t.kind === 'script');
+	const scriptTab = tabs.find((t) => t.id === 'script');
 	const customCode = (scriptTab && currentContents.get(scriptTab.id)) ?? '';
 
-	const moduleTabs = tabs.filter((t) => t.kind === 'wasm');
+	const moduleTabs = tabs.filter((t) => t.id !== 'script');
 	if (moduleTabs.length === 0) return { customCode };
 
-	const modules: Array<CustomRunModule> = moduleTabs.map((t) => ({
-		name: t.id,
-		kind: 'wasm',
-		base64: (currentContents.get(t.id) ?? '').replace(/\s+/g, ''),
-	}));
+	const modules: Array<CustomRunModule> = moduleTabs.map((t) =>
+		t.kind === 'wasm'
+			? { name: t.id, kind: 'wasm', base64: (currentContents.get(t.id) ?? '').replace(/\s+/g, '') }
+			: { name: t.id, kind: 'js', source: currentContents.get(t.id) ?? '' },
+	);
 
 	return { customCode, modules };
 }
@@ -153,27 +273,27 @@ export type PermissionBadge = {
 // The default grant (no permissions, or nothing beyond fetch/storage 'none')
 // renders an explicit "no network access" badge rather than nothing — the
 // sandbox being locked down is the demo's point, so say so. The depth/fetches/
-// cpu segments are gated on a network grant (they cap env.fetch, which doesn't
-// exist without one); the storage badge is independent.
+// cpu segments are gated on a network grant (they cap resource reads, which
+// don't exist without one); the storage badge is independent.
 export function permissionBadges(permissions: Permissions | undefined): Array<PermissionBadge> {
 	const badges: Array<PermissionBadge> = [];
 	if (permissions?.fetch === 'page-links') {
 		badges.push({
 			label: 'network: page links',
-			detail: 'env.fetch / env.fetchFile may request URLs the fetched page references — no arbitrary hosts.',
+			detail: 'Each URL referenced by the page gets a target-bound resource capability with a zero-argument read() method.',
 			tone: 'net',
 		});
 		if (typeof permissions.fetchDepth === 'number' && permissions.fetchDepth > 1) {
 			badges.push({
 				label: `link depth ${permissions.fetchDepth}`,
-				detail: `URLs referenced by fetched pages become fetchable too, up to ${permissions.fetchDepth - 1} hop(s) beyond the original page.`,
+				detail: `Text resources return capabilities discovered in that document, up to ${permissions.fetchDepth - 1} hop(s) beyond the original page.`,
 				tone: 'limit',
 			});
 		}
 		if (typeof permissions.maxFetches === 'number') {
 			badges.push({
-				label: `max ${permissions.maxFetches} fetches`,
-				detail: `At most ${permissions.maxFetches} env.fetch / env.fetchFile calls per run.`,
+				label: `max ${permissions.maxFetches} reads`,
+				detail: `At most ${permissions.maxFetches} resource capability reads per run.`,
 				tone: 'limit',
 			});
 		}
@@ -194,7 +314,7 @@ export function permissionBadges(permissions: Permissions | undefined): Array<Pe
 	if (permissions?.storage === 'scoped') {
 		badges.push({
 			label: 'storage: scoped',
-			detail: 'env.storage — a small per-visitor, per-script key/value store, deleted about an hour after the last run.',
+			detail: 'env.DB — a private per-visitor, per-script SQLite database, capped at 128 KiB and deleted about an hour after the last run.',
 			tone: 'storage',
 		});
 	}
@@ -274,6 +394,16 @@ export function formatResultValue(value: unknown): string {
 	}
 }
 
+// A transform can return both `{ markdown, json }`: markdown powers the
+// rendered preview, while the JSON pane should show only the value the author
+// deliberately exposed as `json` (not the potentially very large markdown
+// source beside it). Direct-value results remain supported for examples and
+// custom transforms that do not use the two-view wrapper.
+export function outputJsonValue(result: unknown): unknown {
+	if (typeof result !== 'object' || result === null || Array.isArray(result)) return result;
+	return Object.prototype.hasOwnProperty.call(result, 'json') ? (result as Record<string, unknown>).json : result;
+}
+
 // Returns the raw display strings. The DOM layer (main.ts) renders these via
 // textContent, which is the security boundary that makes hostile HTML inert —
 // so we must NOT HTML-escape here, or output would be visibly double-escaped
@@ -283,7 +413,7 @@ export function formatRunResponse(resp: RunResponse): FormatRunResponseResult {
 	if (resp.ok) {
 		return {
 			title: 'Success',
-			body: formatResultValue(resp.result),
+			body: formatResultValue(outputJsonValue(resp.result)),
 			tone: 'ok',
 		};
 	}
@@ -305,10 +435,17 @@ export function exampleOptions(examples: ReadonlyArray<Example>): Array<ExampleO
 export type TraceRow = {
 	readonly depthLevel: number;
 	readonly label: string;
+	readonly durationLabel: string;
 	readonly leftPct: number;
 	readonly widthPct: number;
 	readonly tone: 'ok' | 'error' | 'phase';
 	readonly detail: string;
+};
+
+export type TraceAxisTick = {
+	readonly leftPct: number;
+	readonly label: string;
+	readonly align: 'start' | 'middle' | 'end';
 };
 
 // Minimum visible bar width (percent of the shared time axis) so a ~0ms span
@@ -348,17 +485,42 @@ function computeDepths(spans: ReadonlyArray<TraceSpan>): Map<string, number> {
 	return depths;
 }
 
-// Short pathname-ish tail of a URL for a gate span's label (the full URL goes
-// in `detail` instead, so the row stays scannable). Falls back to the raw
-// string if it doesn't parse as a URL.
-function urlTail(rawUrl: string): string {
+function traceUrlLabel(rawUrl: string): string {
 	try {
 		const u = new URL(rawUrl);
-		const segments = u.pathname.split('/').filter(Boolean);
-		return segments.length > 0 ? segments[segments.length - 1] : u.hostname;
+		const path = `${u.pathname}${u.search}`;
+		return path === '/' ? u.hostname : path;
 	} catch {
 		return rawUrl;
 	}
+}
+
+function humanizeTraceName(name: string): string {
+	const knownNames: Readonly<Record<string, string>> = {
+		run: 'Run',
+		target_fetch: 'Fetch input',
+		loader: 'Run worker',
+		'resource.read': 'Read',
+		logs_read: 'Collect logs',
+	};
+	return knownNames[name] ?? name.replace(/[._]+/g, ' ').replace(/^./, (first) => first.toUpperCase());
+}
+
+export function formatTraceDuration(ms: number): string {
+	if (ms === 0) return '0 ms';
+	if (ms < 1) return `${ms.toFixed(1)} ms`;
+	if (ms < 1000) return `${Math.round(ms)} ms`;
+	const seconds = ms / 1000;
+	return `${seconds < 10 ? seconds.toFixed(2) : seconds.toFixed(1)} s`;
+}
+
+export function buildTraceAxisTicks(totalMs: number): Array<TraceAxisTick> {
+	const safeTotalMs = Math.max(totalMs, 0);
+	return [0, 25, 50, 75, 100].map((leftPct) => ({
+		leftPct,
+		label: formatTraceDuration((safeTotalMs * leftPct) / 100),
+		align: leftPct === 0 ? 'start' : leftPct === 100 ? 'end' : 'middle',
+	}));
 }
 
 // Builds the waterfall rows for the trace UI: nesting depth from the
@@ -379,8 +541,9 @@ export function buildTraceLayout(spans: ReadonlyArray<TraceSpan>, totalMs: numbe
 		const kind = typeof span.attrs.kind === 'string' ? span.attrs.kind : '';
 		const tone: TraceRow['tone'] = span.status === 'error' ? 'error' : kind.startsWith('gate_') ? 'ok' : 'phase';
 
-		const name = typeof span.attrs.name === 'string' ? span.attrs.name : String(span.attrs.name ?? span.spanId);
-		const label = typeof span.attrs.url === 'string' ? `${name} ${urlTail(span.attrs.url)}` : name;
+		const name = typeof span.attrs.name === 'string' ? span.attrs.name : null;
+		const humanName = name === null ? span.spanId : humanizeTraceName(name);
+		const label = typeof span.attrs.url === 'string' ? `${humanName} ${traceUrlLabel(span.attrs.url)}` : humanName;
 
 		const detail = [
 			...Object.entries(span.attrs).map(([k, v]) => `${k}: ${v}`),
@@ -390,6 +553,7 @@ export function buildTraceLayout(spans: ReadonlyArray<TraceSpan>, totalMs: numbe
 		return {
 			depthLevel: depths.get(span.spanId) ?? 0,
 			label,
+			durationLabel: formatTraceDuration(span.durMs),
 			leftPct,
 			widthPct,
 			tone,

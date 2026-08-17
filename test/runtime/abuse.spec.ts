@@ -2,6 +2,7 @@ import { env, createExecutionContext, waitOnExecutionContext, SELF } from 'cloud
 import { describe, it, expect, afterEach, vi } from 'vitest';
 import worker, { setTurnstileVerifier } from '../../src/index';
 import { verifyTurnstile } from '../../src/runtime/turnstile';
+import { API_PREFIX } from '../../src/paths';
 
 const IncomingRequest = Request<unknown, IncomingRequestCfProperties>;
 
@@ -18,7 +19,7 @@ describe('Abuse controls on /api/run', () => {
 			setTurnstileVerifier(async () => ({ ok: false, errorCodes: ['missing-input-response'] }));
 
 			try {
-				const request = new IncomingRequest('http://example.com/api/run', {
+				const request = new IncomingRequest(`http://example.com${API_PREFIX}/run`, {
 					method: 'POST',
 					body: JSON.stringify({
 						worker: { type: 'example', exampleId: 'hackernews' },
@@ -49,7 +50,7 @@ describe('Abuse controls on /api/run', () => {
 			setTurnstileVerifier(async () => ({ ok: false, errorCodes: ['invalid-input-response'] }));
 
 			try {
-				const request = new IncomingRequest('http://example.com/api/run', {
+				const request = new IncomingRequest(`http://example.com${API_PREFIX}/run`, {
 					method: 'POST',
 					body: JSON.stringify({
 						worker: { type: 'example', exampleId: 'hackernews' },
@@ -80,7 +81,7 @@ describe('Abuse controls on /api/run', () => {
 			setTurnstileVerifier(async () => ({ ok: true, errorCodes: [] }));
 
 			try {
-				const request = new IncomingRequest('http://example.com/api/run', {
+				const request = new IncomingRequest(`http://example.com${API_PREFIX}/run`, {
 					method: 'POST',
 					body: JSON.stringify({
 						worker: { type: 'example', exampleId: 'hackernews' },
@@ -118,7 +119,7 @@ describe('Abuse controls on /api/run', () => {
 			const limitSpy = vi.spyOn(env.RATE_LIMITER, 'limit').mockResolvedValue({ success: false });
 
 			try {
-				const request = new IncomingRequest('http://example.com/api/run', {
+				const request = new IncomingRequest(`http://example.com${API_PREFIX}/run`, {
 					method: 'POST',
 					body: JSON.stringify({
 						worker: { type: 'custom', customCode: 'export default (env, input) => input.status' },
@@ -158,7 +159,7 @@ describe('Abuse controls on /api/run', () => {
 			setTurnstileVerifier(async () => ({ ok: true, errorCodes: [] }));
 
 			try {
-				const request = new IncomingRequest('http://example.com/api/run', {
+				const request = new IncomingRequest(`http://example.com${API_PREFIX}/run`, {
 					method: 'POST',
 					body: JSON.stringify({
 						worker: { type: 'example', exampleId: 'markdown' },

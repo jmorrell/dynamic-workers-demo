@@ -227,9 +227,9 @@ describe('Example transforms through loader (AC2.1–AC2.5)', () => {
 
 			expect(result.type).toBe('success');
 			if (result.type === 'success') {
-				const output = result.value as { title: unknown; markdown: unknown; error?: unknown };
+				const output = result.value as { markdown: unknown; json: { title: unknown; error?: unknown } };
 				// Defuddle ran cleanly (no caught error) and produced non-empty markdown.
-				expect(output.error).toBeUndefined();
+				expect(output.json.error).toBeUndefined();
 				expect(typeof output.markdown).toBe('string');
 				expect((output.markdown as string).length).toBeGreaterThan(0);
 				// Article body text survives the extraction.
@@ -290,17 +290,17 @@ describe('Example transforms through loader (AC2.1–AC2.5)', () => {
 
 			expect(result.type).toBe('success');
 			if (result.type === 'success') {
-				const output = result.value as { markdown: string; comments: Array<Record<string, unknown>> };
-				expect(Array.isArray(output.comments)).toBe(true);
-				expect(output.comments.length).toBeGreaterThan(0);
+				const output = result.value as { markdown: string; json: { comments: Array<Record<string, unknown>> } };
+				expect(Array.isArray(output.json.comments)).toBe(true);
+				expect(output.json.comments.length).toBeGreaterThan(0);
 				// Should include comments from various nesting levels
 				// and be sorted by points descending
-				const points = output.comments.map((c) => (c.points as number | null) ?? -Infinity);
+				const points = output.json.comments.map((c) => (c.points as number | null) ?? -Infinity);
 				for (let i = 0; i < points.length - 1; i++) {
 					expect(points[i] >= points[i + 1]).toBe(true);
 				}
 				// Verify we have extracted from nested children
-				const authors = output.comments.map((c) => c.author);
+				const authors = output.json.comments.map((c) => c.author);
 				expect(authors).toContain('user_alice');
 				expect(authors).toContain('user_bob');
 
@@ -433,14 +433,14 @@ describe('Example transforms through loader (AC2.1–AC2.5)', () => {
 			expect(example.code.length).toBeGreaterThan(0);
 		});
 
-		// NOTE: feed-watcher is NOT executed through runInLoader/StorageHost here —
+		// NOTE: url-history is NOT executed through runInLoader/StorageHost here —
 		// its storage: 'scoped' grant routes through the StorageHost supervisor DO,
 		// which mounts a facet; facets don't exist in the vitest workers pool (see
-		// src/runtime/AGENTS.md gotchas). Its parsing/pure logic is covered directly
+		// src/runtime/AGENTS.md gotchas). Its storage behavior is covered directly
 		// in test/examples/parse.spec.ts; here we only assert it's registered with
 		// bundled code so the manifest stays complete, same as cpu-spin below.
-		it('feed-watcher example is present in the manifest with bundled code and a storage grant', () => {
-			const example = getExample('feed-watcher');
+		it('url-history example is present in the manifest with bundled code and a storage grant', () => {
+			const example = getExample('url-history');
 			expect(example).toBeDefined();
 			if (!example) return;
 			expect(typeof example.code).toBe('string');

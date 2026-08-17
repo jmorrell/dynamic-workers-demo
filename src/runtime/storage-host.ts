@@ -55,7 +55,7 @@ export type StorageRunArgs = {
 	extraModules?: Record<string, string>;
 	wasmModules?: Record<string, Uint8Array>;
 	permissions?: Permissions;
-	allowedUrls?: ReadonlyArray<string>;
+	initialResources?: ReadonlyArray<import('./types').ResourceGrant>;
 };
 
 /** RPC result: the structured run outcome plus the gate spans drained in this isolate. */
@@ -89,6 +89,16 @@ export class StorageHost extends DurableObject<Env> {
 			// over runId, so identical code across runs still needs a fresh isolate).
 			const id = `${await hashCode(code)}:${runId}`;
 			const worker = this.env.LOADER.get(id, async () => buildWorkerCode(this.env, code, runId, this.ctx.exports, opts));
+
+			// A running facet keeps the Dynamic Worker class chosen by its original
+			// startup callback. That class also keeps that run's tail binding, whose
+			// props contain the original runId. Restart the facet for every invocation
+			// so code and telemetry are current; abort preserves its SQLite database.
+			try {
+				facets.abort(storeKey, new Error('Reloading facet for this invocation'));
+			} catch {
+				// No live facet yet (or it already hibernated): get() below can start it.
+			}
 
 			const facet = facets.get(storeKey, async () => ({ class: worker.getDurableObjectClass('StorageHarness') })) as unknown as {
 				run(input: RunInput): Promise<RunResult>;

@@ -6,8 +6,21 @@ import { execSync } from 'child_process';
 import * as esbuild from 'esbuild';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const repoRoot = path.resolve(__dirname, '..');
+const demoRoot = path.resolve(__dirname, '..');
+const repoRoot = demoRoot;
 const modulesOutDir = path.resolve(repoRoot, 'public/modules');
+
+/**
+ * Registry `entry` and module `file` fields are repo-relative strings (e.g.
+ * 'src/examples/hackernews.ts' or 'node_modules/@cf-wasm/photon/...'). Paths
+ * starting with 'node_modules/' resolve against repoRoot; everything else
+ * resolves against demoRoot.
+ */
+function resolveSourcePath(repoRelativePath) {
+	return repoRelativePath.startsWith('node_modules/')
+		? path.resolve(repoRoot, repoRelativePath)
+		: path.resolve(demoRoot, repoRelativePath);
+}
 
 /**
  * Load EXAMPLE_REGISTRY from src/examples/registry.ts (the single source of
@@ -15,7 +28,7 @@ const modulesOutDir = path.resolve(repoRoot, 'public/modules');
  * data URL — no duplicated example list in this script.
  */
 async function loadRegistry() {
-	const registryPath = path.resolve(repoRoot, 'src/examples/registry.ts');
+	const registryPath = path.resolve(demoRoot, 'src/examples/registry.ts');
 	const built = await esbuild.build({
 		entryPoints: [registryPath],
 		bundle: true,
@@ -30,10 +43,29 @@ async function loadRegistry() {
 }
 
 /**
+ * Load ASSET_PREFIX from src/paths.ts the same way loadRegistry loads
+ * registry.ts, so this script and the app source share one source of truth.
+ */
+async function loadAssetPrefix() {
+	const pathsPath = path.resolve(demoRoot, 'src/paths.ts');
+	const built = await esbuild.build({
+		entryPoints: [pathsPath],
+		bundle: true,
+		format: 'esm',
+		write: false,
+		platform: 'neutral',
+		target: 'esnext',
+	});
+	const base64 = Buffer.from(built.outputFiles[0].text).toString('base64');
+	const mod = await import(`data:text/javascript;base64,${base64}`);
+	return mod.ASSET_PREFIX;
+}
+
+/**
  * Read raw source file content
  */
 async function readSource(entry) {
-	const filePath = path.resolve(repoRoot, entry);
+	const filePath = resolveSourcePath(entry);
 	return fs.readFileSync(filePath, 'utf8');
 }
 
@@ -59,7 +91,7 @@ const SHARED_BUNDLE_OPTIONS = {
  * Dynamic Worker load time (see src/runtime/loader.ts wasmModules).
  */
 async function bundleExample(entry, hasModules = false) {
-	const filePath = path.resolve(repoRoot, entry);
+	const filePath = resolveSourcePath(entry);
 	try {
 		const result = await esbuild.build({
 			...SHARED_BUNDLE_OPTIONS,
@@ -113,7 +145,7 @@ async function bundleDep({ specifier, entry }) {
 	}
 
 	const buildOptions = isFilePath
-		? { ...SHARED_BUNDLE_OPTIONS, entryPoints: [path.resolve(repoRoot, entry)] }
+		? { ...SHARED_BUNDLE_OPTIONS, entryPoints: [resolveSourcePath(entry)] }
 		: { ...SHARED_BUNDLE_OPTIONS, stdin: { contents: stdinContents, resolveDir: repoRoot, loader: 'js' } };
 
 	try {
@@ -140,7 +172,7 @@ async function buildDeps() {
 
 	// Re-derive SHARED_DEP_SPECIFIERS from registry.ts the same way loadRegistry
 	// does, so this stays a single source of truth.
-	const registryPath = path.resolve(repoRoot, 'src/examples/registry.ts');
+	const registryPath = path.resolve(demoRoot, 'src/examples/registry.ts');
 	const built = await esbuild.build({
 		entryPoints: [registryPath],
 		bundle: true,
@@ -163,7 +195,7 @@ async function buildDeps() {
 export const GENERATED_DEP_MODULES = ${JSON.stringify(entries, null, '\t')} as const;
 `;
 
-	const outputPath = path.resolve(repoRoot, 'src/examples/deps.generated.ts');
+	const outputPath = path.resolve(demoRoot, 'src/examples/deps.generated.ts');
 	fs.writeFileSync(outputPath, generatedDeps, 'utf8');
 
 	try {
@@ -195,6 +227,7 @@ async function buildManifest() {
 	cleanModulesDir();
 
 	const EXAMPLE_REGISTRY = await loadRegistry();
+	const ASSET_PREFIX = await loadAssetPrefix();
 	const manifestEntries = [];
 
 	// Maps a module's resolved source file path -> the assetPath it was already
@@ -210,7 +243,10 @@ async function buildManifest() {
 		console.log(`  - Bundling ${example.id}...`);
 		try {
 			const source = await readSource(example.entry);
-			const code = await bundleExample(example.entry, Boolean(example.modules?.length));
+			const code = await bundleExample(
+				example.entry,
+				Boolean(example.modules?.some((m) => m.kind === 'wasm')),
+			);
 
 			// Non-JS modules (currently only wasm) the example's code imports by
 			// relative specifier: copy the committed binary to
@@ -223,17 +259,41 @@ async function buildManifest() {
 			// another example's directory.
 			const modules = example.modules?.length
 				? example.modules.map((m) => {
-						const sourcePath = path.resolve(repoRoot, m.file);
+						if (m.kind === 'js') {
+							return {
+								name: m.name,
+								label: m.label,
+								kind: m.kind,
+								source: fs.readFileSync(resolveSourcePath(m.file), 'utf8'),
+							};
+						}
+						const sourcePath = resolveSourcePath(m.file);
+						const bytes = fs.readFileSync(sourcePath);
+						const previewBase64 = bytes.subarray(0, 1536).toString('base64');
 						const existingAssetPath = emittedModulesByFile.get(sourcePath);
 						if (existingAssetPath) {
-							return { name: m.name, kind: m.kind, assetPath: existingAssetPath };
+							return {
+								name: m.name,
+								label: m.label,
+								kind: m.kind,
+								assetPath: existingAssetPath,
+								previewBase64,
+								byteSize: bytes.byteLength,
+							};
 						}
 						const exampleDir = path.resolve(modulesOutDir, example.id);
 						fs.mkdirSync(exampleDir, { recursive: true });
 						fs.copyFileSync(sourcePath, path.resolve(exampleDir, m.name));
-						const assetPath = `/modules/${example.id}/${m.name}`;
+						const assetPath = `${ASSET_PREFIX}/modules/${example.id}/${m.name}`;
 						emittedModulesByFile.set(sourcePath, assetPath);
-						return { name: m.name, kind: m.kind, assetPath };
+						return {
+							name: m.name,
+							label: m.label,
+							kind: m.kind,
+							assetPath,
+							previewBase64,
+							byteSize: bytes.byteLength,
+						};
 					})
 				: undefined;
 
@@ -261,7 +321,7 @@ async function buildManifest() {
 export const GENERATED_MANIFEST = ${JSON.stringify(manifestEntries, null, '\t')} as const;
 `;
 
-	const outputPath = path.resolve(repoRoot, 'src/examples/manifest.generated.ts');
+	const outputPath = path.resolve(demoRoot, 'src/examples/manifest.generated.ts');
 	fs.writeFileSync(outputPath, generatedManifest, 'utf8');
 
 	// Format with prettier

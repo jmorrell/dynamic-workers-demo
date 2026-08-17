@@ -10,16 +10,20 @@ async function buildFrontend() {
 	console.log('Building frontend bundle...');
 
 	try {
+		const outfile = path.resolve(repoRoot, 'public/app.js');
+		const fs = await import('fs');
+		fs.mkdirSync(path.dirname(outfile), { recursive: true });
+
 		const result = await esbuild.build({
 			entryPoints: [path.resolve(repoRoot, 'frontend/main.ts')],
 			bundle: true,
 			format: 'iife',
-			outfile: path.resolve(repoRoot, 'public/app.js'),
+			outfile,
 			minify: true,
 			target: 'es2022',
 		});
 
-		console.log('Frontend bundle created at public/app.js');
+		console.log(`Frontend bundle created at ${path.relative(repoRoot, outfile)}`);
 		if (result.errors.length > 0) {
 			console.error('Build errors:', result.errors);
 			process.exit(1);

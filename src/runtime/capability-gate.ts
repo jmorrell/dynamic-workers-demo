@@ -1,11 +1,11 @@
 import { WorkerEntrypoint } from 'cloudflare:workers';
 import { clampFetchDepth, clampMaxFetches, DEFAULT_MAX_FETCHES, guardFetchUrl, truncateBody } from './core';
-import { extractLinkedUrls } from './extract-urls';
-import type { FetchFileResult, FetchTextResult } from './types';
+import { extractLinkedResources } from './extract-urls';
+import type { GateResourceResult, ResourceGrant } from './types';
 import type { GateSpanDraft } from './trace';
 
 /**
- * Default per-run total cap on gate fetches, when a run doesn't override it via
+ * Default per-run total cap on resource reads, when a run doesn't override it via
  * `permissions.maxFetches` (mirrors the loaded worker's `limits.subRequests` in
  * that case). Re-exported from `core.ts`'s `DEFAULT_MAX_FETCHES` — the canonical
  * constant, also used by `clampMaxFetches` — so existing tests/imports that
@@ -13,14 +13,14 @@ import type { GateSpanDraft } from './trace';
  * `clampMaxFetches(props.maxFetches)`, not this constant.
  */
 export const GATE_MAX_FETCHES = DEFAULT_MAX_FETCHES;
-/** Timeout for a single gate fetch (matches fetchTarget). */
+/** Timeout for a single resource read (matches fetchTarget). */
 const GATE_TIMEOUT_MS = 8000;
-/** Body cap for fetchText (UTF-8-boundary truncation, like fetchTarget). */
+/** Body cap for textual resources (UTF-8-boundary truncation, like fetchTarget). */
 const GATE_TEXT_MAX_BYTES = 2 * 1024 * 1024;
-/** Byte cap for fetchFile. */
+/** Byte cap for binary resources. */
 const GATE_FILE_MAX_BYTES = 20 * 1024 * 1024;
 /**
- * Per-run cap on how many grown-allowlist entries (from transitive fetchDepth
+ * Per-run cap on how many child capabilities (from transitive fetchDepth
  * expansion) can accumulate. This bounds memory only — it is generous relative
  * to the real reachability bound, which is the run's granted `maxFetches`
  * (clamped to [1,100] — see `clampMaxFetches` in core.ts): only that many gate
@@ -31,7 +31,7 @@ export const GATE_MAX_GROWN_URLS = 5000;
 
 type GateProps = {
 	runId: string;
-	allowedUrls: ReadonlyArray<string>;
+	initialResources: ReadonlyArray<ResourceGrant>;
 	fetchDepth: number;
 	maxFetches: number;
 };
@@ -44,13 +44,15 @@ type GateProps = {
 // locally-testable half.
 const fetchCounts = new Map<string, number>();
 
-// Per-run allowlist growth from transitive fetchDepth expansion: normalized URL
-// -> the depth at which it became reachable. Same module-scope trade-off as
-// fetchCounts (a fresh WorkerEntrypoint per RPC call means this can't be instance
-// state). Depth 1 entries live in props.allowedUrls, never here.
-const grownAllowlists = new Map<string, Map<string, number>>();
+type GrownResource = ResourceGrant & { depth: number };
 
-// Per-run gate-call spans (one draft per env.fetch/env.fetchFile call, including
+// Child capabilities minted from successfully read text resources. Opaque id
+// -> its host-owned URL/source/depth. A fresh WorkerEntrypoint is created per RPC
+// call, so this must share the same module-scoped lifetime as the fetch counter.
+const grownResources = new Map<string, Map<string, GrownResource>>();
+const grownResourceIdsByUrl = new Map<string, Map<string, string>>();
+
+// Per-run gate-call spans (one draft per resource read, including
 // denials), recorded for the host's trace assembly. Same module-scope trade-off
 // as fetchCounts/grownAllowlists above (a fresh WorkerEntrypoint per RPC call
 // means this can't be instance state). The host drains these via
@@ -78,7 +80,7 @@ export function collectGateSpans(runId: string): GateSpanDraft[] {
 }
 
 /**
- * Best-effort in-memory hygiene: clears a run's fetchCounts, grown-allowlist,
+ * Best-effort in-memory hygiene: clears a run's fetchCounts, child resources,
  * and gate-span entries. Call after a run finishes reading its logs (and, for
  * spans, after the host has drained them via collectGateSpans). The loopback
  * shares module scope across runs in practice (workerd may reuse the isolate),
@@ -88,7 +90,8 @@ export function collectGateSpans(runId: string): GateSpanDraft[] {
  */
 export function releaseGateRun(runId: string): void {
 	fetchCounts.delete(runId);
-	grownAllowlists.delete(runId);
+	grownResources.delete(runId);
+	grownResourceIdsByUrl.delete(runId);
 	gateSpans.delete(runId);
 }
 
@@ -98,99 +101,102 @@ export function releaseGateRun(runId: string): void {
  * `env.GATE`. All policy lives here: the sandbox holds no bindings and never sees
  * host secrets — only the plain data these methods return.
  *
- * Both methods enforce, in order: the SSRF host guard, an exact-match allowlist
- * (the URL must be a link from the originally fetched page, or — up to the
- * granted `fetchDepth` — a link from a page the run has since successfully
- * text-fetched), a per-run fetch count cap, an 8s timeout, and a size cap.
+ * `readResource` first resolves an opaque id to host-owned authority, then
+ * enforces the SSRF guard, per-run read cap, timeout, and response-size cap.
  */
 export class CapabilityGate extends WorkerEntrypoint<Env> {
 	private props(): GateProps {
 		return this.ctx.props as GateProps;
 	}
 
-	// Resolves the requested URL's depth: 1 if it's in the original allowlist,
-	// else its recorded grown depth, else undefined (deny).
-	private resolveDepth(normalized: string): number | undefined {
-		const { runId, allowedUrls } = this.props();
-		if (allowedUrls.includes(normalized)) return 1;
-		return grownAllowlists.get(runId)?.get(normalized);
+	private resolveResource(id: string): GrownResource | undefined {
+		const { runId, initialResources } = this.props();
+		const initial = initialResources.find((resource) => resource.id === id);
+		if (initial) return { ...initial, depth: 1 };
+		return grownResources.get(runId)?.get(id);
 	}
 
-	// callKind identifies which public method is authorizing (fetchText vs
-	// fetchFile) purely so a denial span can carry the right name/kind — the
-	// thrown message text is unchanged either way (transform-visible behavior
-	// must not change).
-	private authorize(url: string, callKind: 'gate_fetch_text' | 'gate_fetch_file'): { url: URL; depth: number } {
+	// Resolves opaque authority before applying the usual URL and budget guards.
+	private authorize(id: string): { resource: GrownResource; url: URL } {
 		const { runId } = this.props();
-		const name = callKind === 'gate_fetch_text' ? 'env.fetch' : 'env.fetchFile';
 		const startAbsMs = performance.now();
+		const resource = this.resolveResource(id);
+		const displayUrl = resource?.url ?? '<unknown capability>';
 
-		// Records a ~0-duration error span for a denial. Not routed through a
-		// shared "deny and throw" helper: a helper typed to return `never` doesn't
-		// narrow the caller's union-typed locals across the call in this codebase's
-		// TS config, so each denial site below still throws directly (unchanged
-		// message — transform-visible behavior must not change).
+		// Records a ~0-duration error span for a denial.
 		const recordDenial = (reason: string): void => {
 			recordGateSpan(runId, {
 				startAbsMs,
 				endAbsMs: performance.now(),
 				status: 'error',
-				attrs: { name, kind: callKind, url, denied: reason },
+				attrs: { name: 'resource.read', kind: 'gate_resource_read', url: displayUrl, denied: reason },
 			});
 		};
 
-		const guarded = guardFetchUrl(url);
-		if (!guarded.ok) {
-			recordDenial(guarded.reason);
-			throw new Error(`env.fetch denied: ${guarded.reason}`);
+		if (!resource) {
+			const reason = 'unknown or forged resource capability';
+			recordDenial(reason);
+			throw new Error(`resource.read denied: ${reason}`);
 		}
 
-		const normalized = guarded.url.toString();
-		const depth = this.resolveDepth(normalized);
-		if (depth === undefined) {
-			const reason = `${normalized} is not reachable within the granted fetch depth from the fetched page`;
-			recordDenial(reason);
-			throw new Error(`env.fetch denied: ${reason}`);
+		const guarded = guardFetchUrl(resource.url);
+		if (!guarded.ok) {
+			recordDenial(guarded.reason);
+			throw new Error(`resource.read denied: ${guarded.reason}`);
 		}
 
 		const { maxFetches } = this.props();
 		const grantedMaxFetches = clampMaxFetches(maxFetches);
 		const used = fetchCounts.get(runId) ?? 0;
 		if (used >= grantedMaxFetches) {
-			const reason = `exceeded the ${grantedMaxFetches}-fetch limit for this run`;
+			const reason = `exceeded the ${grantedMaxFetches}-read limit for this run`;
 			recordDenial(reason);
-			throw new Error(`env.fetch denied: ${reason}`);
+			throw new Error(`resource.read denied: ${reason}`);
 		}
 		fetchCounts.set(runId, used + 1);
 
-		return { url: guarded.url, depth };
+		return { resource, url: guarded.url };
 	}
 
-	// Records URLs linked from a successfully fetched page at depth+1, when the
-	// fetched page's own depth is still below the run's granted fetchDepth. Never
-	// overwrites an existing entry with a higher depth (a URL reachable at depth 2
-	// stays at depth 2 even if also linked from a depth-3 page), skips URLs already
-	// in props.allowedUrls (depth 1, no need to track separately), and stops once
-	// GATE_MAX_GROWN_URLS total grown entries exist for this run.
-	private growAllowlist(runId: string, fetchedUrl: string, depth: number, body: string, contentType: string): void {
-		const { fetchDepth, allowedUrls } = this.props();
-		if (depth >= clampFetchDepth(fetchDepth)) return;
+	// Mints child capabilities for URLs linked from a successfully read text
+	// resource at depth+1, stopping at the granted depth and memory cap. Existing
+	// root or child URLs reuse their original opaque grant.
+	private mintChildResources(runId: string, fetchedUrl: string, depth: number, body: string, contentType: string): ResourceGrant[] {
+		const { fetchDepth, initialResources } = this.props();
+		if (depth >= clampFetchDepth(fetchDepth)) return [];
 
-		let grown = grownAllowlists.get(runId);
+		let grown = grownResources.get(runId);
 		if (!grown) {
-			grown = new Map<string, number>();
-			grownAllowlists.set(runId, grown);
+			grown = new Map<string, GrownResource>();
+			grownResources.set(runId, grown);
+		}
+		let idsByUrl = grownResourceIdsByUrl.get(runId);
+		if (!idsByUrl) {
+			idsByUrl = new Map<string, string>();
+			grownResourceIdsByUrl.set(runId, idsByUrl);
 		}
 
 		const nextDepth = depth + 1;
-		for (const linked of extractLinkedUrls(body, contentType, fetchedUrl)) {
+		const grants: ResourceGrant[] = [];
+		for (const descriptor of extractLinkedResources(body, contentType, fetchedUrl)) {
 			if (grown.size >= GATE_MAX_GROWN_URLS) break;
-			if (allowedUrls.includes(linked)) continue;
-			const existing = grown.get(linked);
-			if (existing === undefined || nextDepth < existing) {
-				grown.set(linked, nextDepth);
+			const initial = initialResources.find((resource) => resource.url === descriptor.url);
+			if (initial) {
+				grants.push(initial);
+				continue;
 			}
+			const existingId = idsByUrl.get(descriptor.url);
+			const existing = existingId ? grown.get(existingId) : undefined;
+			if (existing) {
+				grants.push({ id: existing.id, url: existing.url, source: existing.source });
+				continue;
+			}
+			const grant: ResourceGrant = { ...descriptor, id: crypto.randomUUID() };
+			grown.set(grant.id, { ...grant, depth: nextDepth });
+			idsByUrl.set(grant.url, grant.id);
+			grants.push(grant);
 		}
+		return grants;
 	}
 
 	private async doFetch(url: URL): Promise<Response> {
@@ -214,69 +220,69 @@ export class CapabilityGate extends WorkerEntrypoint<Env> {
 		}
 	}
 
-	// Grows the allowlist on success (see growAllowlist); fetchFile never does —
-	// binary responses have no text to extract links from.
-	async fetchText(url: string): Promise<FetchTextResult> {
+	async readResource(id: string): Promise<GateResourceResult> {
 		const { runId } = this.props();
 		const startAbsMs = performance.now();
-		const { url: target, depth } = this.authorize(url, 'gate_fetch_text');
+		const { resource, url: target } = this.authorize(id);
 		try {
 			const response = await this.doFetch(target);
-			const contentType = response.headers.get('content-type') ?? 'text/plain';
-			const raw = await response.text();
-			const { body, truncated } = truncateBody(raw, GATE_TEXT_MAX_BYTES);
-			if (response.ok) {
-				this.growAllowlist(runId, target.toString(), depth, body, contentType);
+			const contentType = response.headers.get('content-type') ?? 'application/octet-stream';
+			let result: GateResourceResult;
+			let byteLength: number;
+			if (isTextContentType(contentType)) {
+				const raw = await response.text();
+				const { body, truncated } = truncateBody(raw, GATE_TEXT_MAX_BYTES);
+				const resources = response.ok
+					? this.mintChildResources(runId, target.toString(), resource.depth, body, contentType)
+					: [];
+				result = { kind: 'text', status: response.status, contentType, body, truncated, resources };
+				byteLength = new TextEncoder().encode(body).byteLength;
+			} else {
+				const full = new Uint8Array(await response.arrayBuffer());
+				const truncated = full.byteLength > GATE_FILE_MAX_BYTES;
+				const bytes = truncated ? full.slice(0, GATE_FILE_MAX_BYTES) : full;
+				result = { kind: 'bytes', status: response.status, contentType, bytes, truncated };
+				byteLength = bytes.byteLength;
 			}
 			recordGateSpan(runId, {
 				startAbsMs,
 				endAbsMs: performance.now(),
 				status: 'ok',
-				attrs: { name: 'env.fetch', kind: 'gate_fetch_text', url, httpStatus: response.status, bytes: body.length, truncated, depth },
+				attrs: {
+					name: 'resource.read',
+					kind: 'gate_resource_read',
+					url: resource.url,
+					httpStatus: response.status,
+					bytes: byteLength,
+					truncated: result.truncated,
+					depth: resource.depth,
+					resourceKind: result.kind,
+				},
 			});
-			return { status: response.status, contentType, body, truncated };
+			return result;
 		} catch (err) {
-			// Rethrown unchanged (timeout/abort etc.) — only the span records the
-			// failure; transform-visible behavior is untouched.
 			const message = err instanceof Error ? err.message : String(err);
 			recordGateSpan(runId, {
 				startAbsMs,
 				endAbsMs: performance.now(),
 				status: 'error',
-				attrs: { name: 'env.fetch', kind: 'gate_fetch_text', url, error: message, depth },
+				attrs: { name: 'resource.read', kind: 'gate_resource_read', url: resource.url, error: message, depth: resource.depth },
 			});
 			throw err;
 		}
 	}
+}
 
-	// Never grows the allowlist: fetchFile responses are treated as opaque binary
-	// data, and link extraction is text-only.
-	async fetchFile(url: string): Promise<FetchFileResult> {
-		const { runId } = this.props();
-		const startAbsMs = performance.now();
-		const { url: target, depth } = this.authorize(url, 'gate_fetch_file');
-		try {
-			const response = await this.doFetch(target);
-			const contentType = response.headers.get('content-type') ?? 'application/octet-stream';
-			const full = new Uint8Array(await response.arrayBuffer());
-			const truncated = full.byteLength > GATE_FILE_MAX_BYTES;
-			const bytes = truncated ? full.slice(0, GATE_FILE_MAX_BYTES) : full;
-			recordGateSpan(runId, {
-				startAbsMs,
-				endAbsMs: performance.now(),
-				status: 'ok',
-				attrs: { name: 'env.fetchFile', kind: 'gate_fetch_file', url, httpStatus: response.status, bytes: bytes.byteLength, truncated, depth },
-			});
-			return { status: response.status, contentType, bytes, truncated };
-		} catch (err) {
-			const message = err instanceof Error ? err.message : String(err);
-			recordGateSpan(runId, {
-				startAbsMs,
-				endAbsMs: performance.now(),
-				status: 'error',
-				attrs: { name: 'env.fetchFile', kind: 'gate_fetch_file', url, error: message, depth },
-			});
-			throw err;
-		}
-	}
+export function isTextContentType(contentType: string): boolean {
+	const type = contentType.split(';')[0].trim().toLowerCase();
+	return (
+		type.startsWith('text/') ||
+		type === 'application/json' ||
+		type.endsWith('+json') ||
+		type === 'application/xml' ||
+		type.endsWith('+xml') ||
+		type === 'application/javascript' ||
+		type === 'application/x-javascript' ||
+		type === 'application/x-www-form-urlencoded'
+	);
 }

@@ -1,11 +1,9 @@
 import { describe, it, expect } from 'vitest';
-import type { RunInput, StorageApi, TransformEnv } from '../../src/runtime/types';
+import type { DatabaseApi, DatabaseResult, RunInput, TransformEnv } from '../../src/runtime/types';
 import opengraph from '../../src/examples/opengraph';
 import hackernews from '../../src/examples/hackernews';
-import feedWatcher, { extractFeedTitle, extractItems, hashIdentity, computeDelta, type FeedItem } from '../../src/examples/feed-watcher';
+import urlHistory from '../../src/examples/url-history';
 
-// The parsing logic lives inline inside each example's transform(). These tests
-// drive the examples through their default export, feeding `body` via RunInput.
 function runInput(body: string, url = 'https://example.com'): RunInput {
 	return {
 		url,
@@ -62,7 +60,7 @@ describe('opengraph example', () => {
 
 describe('hackernews example', () => {
 	type HnComment = { author: string; points: number | null; text: string };
-	type HnResult = { markdown: string; comments: HnComment[] };
+	type HnResult = { markdown: string; json: { comments: HnComment[] } };
 
 	it('extracts top comments from Algolia item recursively', () => {
 		const json = JSON.stringify({
@@ -81,11 +79,11 @@ describe('hackernews example', () => {
 		});
 
 		const result = hackernews({}, runInput(json, HN_URL)) as HnResult;
-		expect(result.comments).toHaveLength(4);
-		expect(result.comments[0].author).toBe('alice');
-		expect(result.comments[0].points).toBe(42);
-		expect(result.comments[1].author).toBe('bob');
-		expect(result.comments[1].points).toBe(23);
+		expect(result.json.comments).toHaveLength(4);
+		expect(result.json.comments[0].author).toBe('alice');
+		expect(result.json.comments[0].points).toBe(42);
+		expect(result.json.comments[1].author).toBe('bob');
+		expect(result.json.comments[1].points).toBe(23);
 		expect(typeof result.markdown).toBe('string');
 	});
 
@@ -95,10 +93,8 @@ describe('hackernews example', () => {
 			author: `user${i}`,
 			points: 100 - i,
 		}));
-		const json = JSON.stringify({ children });
-
-		const result = hackernews({}, runInput(json, HN_URL)) as HnResult;
-		expect(result.comments).toHaveLength(10);
+		const result = hackernews({}, runInput(JSON.stringify({ children }), HN_URL)) as HnResult;
+		expect(result.json.comments).toHaveLength(10);
 	});
 
 	it('throws when the URL is not the HN Algolia API', () => {
@@ -127,220 +123,68 @@ describe('hackernews example', () => {
 				{ text: 'comment3', author: 'user3', points: 50 },
 			],
 		});
-
 		const result = hackernews({}, runInput(json, HN_URL)) as HnResult;
-		expect(result.comments).toHaveLength(3);
-		expect(result.comments[0].points).toBe(100);
-		expect(result.comments[1].points).toBe(50);
-		expect(result.comments[2].points).toBe(null);
+		expect(result.json.comments.map((comment) => comment.points)).toEqual([100, 50, null]);
 	});
 
 	it('skips entries without text', () => {
 		const json = JSON.stringify({
 			children: [
 				{ text: 'comment1', author: 'user1', points: 100 },
-				{ author: 'user2', points: 90 }, // missing text
+				{ author: 'user2', points: 90 },
 				{ text: 'comment3', author: 'user3', points: 80 },
 			],
 		});
-
 		const result = hackernews({}, runInput(json, HN_URL)) as HnResult;
-		expect(result.comments).toHaveLength(2);
-		expect(result.comments[0].author).toBe('user1');
-		expect(result.comments[1].author).toBe('user3');
+		expect(result.json.comments.map((comment) => comment.author)).toEqual(['user1', 'user3']);
 	});
 });
 
-describe('feed-watcher example', () => {
-	const RSS_FEED = `<?xml version="1.0"?>
-		<rss><channel>
-			<title>Example Feed</title>
-			<item>
-				<title>First Post</title>
-				<link>https://example.com/first</link>
-				<guid>guid-1</guid>
-			</item>
-			<item>
-				<title>Second Post</title>
-				<link>https://example.com/second</link>
-				<guid>guid-2</guid>
-			</item>
-		</channel></rss>`;
-
-	const ATOM_FEED = `<?xml version="1.0"?>
-		<feed>
-			<title>Atom Feed</title>
-			<entry>
-				<title>Atom Entry</title>
-				<id>urn:uuid:atom-1</id>
-				<link href="https://example.com/atom-1" rel="alternate"/>
-			</entry>
-		</feed>`;
-
-	describe('extractFeedTitle / extractItems (RSS + Atom parsing)', () => {
-		it('extracts the feed title and item title/link/guid for RSS', () => {
-			expect(extractFeedTitle(RSS_FEED)).toBe('Example Feed');
-			const items = extractItems(RSS_FEED);
-			expect(items).toHaveLength(2);
-			expect(items[0]).toEqual({ title: 'First Post', link: 'https://example.com/first', guid: 'guid-1' });
-			expect(items[1]).toEqual({ title: 'Second Post', link: 'https://example.com/second', guid: 'guid-2' });
-		});
-
-		it('extracts items for Atom feeds, using <id> as the guid', () => {
-			const items = extractItems(ATOM_FEED);
-			expect(items).toHaveLength(1);
-			expect(items[0]).toEqual({ title: 'Atom Entry', link: 'https://example.com/atom-1', guid: 'urn:uuid:atom-1' });
-		});
-
-		it('caps parsed items at MAX_ITEMS_PER_RUN worth of blocks', () => {
-			const manyItems = Array.from(
-				{ length: 150 },
-				(_, i) => `<item><title>Item ${i}</title><link>https://example.com/${i}</link><guid>g${i}</guid></item>`,
-			).join('\n');
-			const feed = `<rss><channel><title>Big Feed</title>${manyItems}</channel></rss>`;
-			expect(extractItems(feed).length).toBeLessThanOrEqual(100);
-		});
-	});
-
-	describe('hashIdentity', () => {
-		it('is deterministic', () => {
-			expect(hashIdentity('https://example.com/a')).toBe(hashIdentity('https://example.com/a'));
-		});
-
-		it('differs for different identities (no trivial collision)', () => {
-			expect(hashIdentity('https://example.com/a')).not.toBe(hashIdentity('https://example.com/b'));
-		});
-
-		it('produces an 8-hex-char digest', () => {
-			expect(hashIdentity('anything')).toMatch(/^[0-9a-f]{8}$/);
-		});
-	});
-
-	describe('computeDelta (pure core)', () => {
-		const items: FeedItem[] = [
-			{ title: 'A', link: 'https://example.com/a', guid: 'a' },
-			{ title: 'B', link: 'https://example.com/b', guid: 'b' },
-		];
-
-		it('reports firstRun true and all items new when nothing was stored yet', () => {
-			const delta = computeDelta(items, []);
-			expect(delta.firstRun).toBe(true);
-			expect(delta.newItems).toHaveLength(2);
-			expect(delta.updatedSeen).toHaveLength(2);
-		});
-
-		it('reports firstRun false and zero new items when everything was already seen', () => {
-			const seeded = computeDelta(items, []).updatedSeen;
-			const delta = computeDelta(items, seeded);
-			expect(delta.firstRun).toBe(false);
-			expect(delta.newItems).toHaveLength(0);
-			expect(delta.updatedSeen).toEqual(seeded);
-		});
-
-		it('reports only the genuinely new items on a partial overlap', () => {
-			const seeded = computeDelta([items[0]], []).updatedSeen;
-			const delta = computeDelta(items, seeded);
-			expect(delta.firstRun).toBe(false);
-			expect(delta.newItems).toHaveLength(1);
-			expect(delta.newItems[0].link).toBe('https://example.com/b');
-			expect(delta.updatedSeen).toHaveLength(2);
-		});
-
-		it('skips items without a link', () => {
-			const delta = computeDelta([{ title: 'no link', link: null, guid: 'x' }], []);
-			expect(delta.newItems).toHaveLength(0);
-			expect(delta.updatedSeen).toHaveLength(0);
-		});
-
-		it('dedupes identical identities appearing twice in the same run', () => {
-			const dup: FeedItem[] = [
-				{ title: 'A', link: 'https://example.com/a', guid: 'a' },
-				{ title: 'A again', link: 'https://example.com/a', guid: 'a' },
-			];
-			const delta = computeDelta(dup, []);
-			expect(delta.newItems).toHaveLength(1);
-			expect(delta.updatedSeen).toHaveLength(1);
-		});
-
-		it('caps the stored seen list at the most recent 500 ids', () => {
-			const manyHashes = Array.from({ length: 500 }, (_, i) => hashIdentity(`old-${i}`));
-			const delta = computeDelta(items, manyHashes);
-			expect(delta.updatedSeen.length).toBe(500);
-			// The two newly-added hashes survive; the oldest two fall off.
-			expect(delta.updatedSeen).toContain(hashIdentity('a'));
-			expect(delta.updatedSeen).toContain(hashIdentity('b'));
-			expect(delta.updatedSeen).not.toContain(hashIdentity('old-0'));
-			expect(delta.updatedSeen).not.toContain(hashIdentity('old-1'));
-		});
-	});
-
-	// A minimal in-memory env.storage stand-in (the real one is backed by a DO
-	// facet's SQLite kv — see src/runtime/harness-source.ts — but its get/put
-	// shape is exactly this). Facets don't exist in the vitest pool (see
-	// src/runtime/AGENTS.md gotchas), so the default transform is exercised
-	// directly here (as opengraph/hackernews are above), simulating
-	// persistence across "runs" by reusing the same fake store.
-	function fakeStorage(): StorageApi {
-		const kv = new Map<string, unknown>();
+describe('url-history example', () => {
+	function fakeDatabase(): DatabaseApi {
+		const urls: string[] = [];
 		return {
-			get: (key) => kv.get(key),
-			put: (key, value) => {
-				kv.set(key, value);
+			databaseSize: 0,
+			exec<Row extends Record<string, unknown>>(query: string, ...bindings: unknown[]): DatabaseResult<Row> {
+				let rows: Array<{ url: string }> = [];
+				let rowsWritten = 0;
+				if (/INSERT INTO submissions/i.test(query)) {
+					urls.push(String(bindings[0]));
+					rowsWritten = 1;
+				} else if (/SELECT url FROM submissions/i.test(query)) {
+					rows = urls.map((url) => ({ url }));
+				}
+				return {
+					columnNames: rows.length > 0 ? ['url'] : [],
+					rowsRead: rows.length,
+					rowsWritten,
+					toArray: () => rows as Row[],
+				};
 			},
-			delete: (key) => kv.delete(key),
-			list: () => [...kv.keys()],
 		};
 	}
 
-	it('default transform: first run reports firstRun:true with every item as new', async () => {
-		const env: TransformEnv = { storage: fakeStorage() };
-		const result = (await feedWatcher(env, runInput(RSS_FEED))) as {
-			feedTitle: string | null;
-			firstRun: boolean;
-			newCount: number;
-			seenTotal: number;
-			items: unknown[];
-		};
-
-		expect(result.feedTitle).toBe('Example Feed');
-		expect(result.firstRun).toBe(true);
-		expect(result.newCount).toBe(2);
-		expect(result.seenTotal).toBe(2);
-		expect(result.items).toHaveLength(2);
+	it('returns the submitted URL on the first run', () => {
+		const env: TransformEnv = { DB: fakeDatabase() };
+		expect(urlHistory(env, runInput('', 'https://example.com/one'))).toEqual({
+			urls: ['https://example.com/one'],
+		});
 	});
 
-	it('default transform: second run against the same feed reports no new items', async () => {
-		const env: TransformEnv = { storage: fakeStorage() };
-		await feedWatcher(env, runInput(RSS_FEED));
-		const second = (await feedWatcher(env, runInput(RSS_FEED))) as { firstRun: boolean; newCount: number; seenTotal: number };
-
-		expect(second.firstRun).toBe(false);
-		expect(second.newCount).toBe(0);
-		expect(second.seenTotal).toBe(2);
+	it('appends each submission and returns the complete history', () => {
+		const env: TransformEnv = { DB: fakeDatabase() };
+		urlHistory(env, runInput('', 'https://example.com/one'));
+		urlHistory(env, runInput('', 'https://example.com/two'));
+		expect(urlHistory(env, runInput('', 'https://example.com/one'))).toEqual({
+			urls: [
+				'https://example.com/one',
+				'https://example.com/two',
+				'https://example.com/one',
+			],
+		});
 	});
 
-	it('default transform: a third run with one added item reports only that item as new', async () => {
-		const env: TransformEnv = { storage: fakeStorage() };
-		await feedWatcher(env, runInput(RSS_FEED));
-
-		const grownFeed = RSS_FEED.replace(
-			'</channel></rss>',
-			'<item><title>Third Post</title><link>https://example.com/third</link><guid>guid-3</guid></item></channel></rss>',
-		);
-		const third = (await feedWatcher(env, runInput(grownFeed))) as {
-			firstRun: boolean;
-			newCount: number;
-			seenTotal: number;
-			items: Array<{ link: string }>;
-		};
-
-		expect(third.firstRun).toBe(false);
-		expect(third.newCount).toBe(1);
-		expect(third.items[0].link).toBe('https://example.com/third');
-		expect(third.seenTotal).toBe(3);
-	});
-
-	it('throws when env.storage is unavailable (no storage grant)', async () => {
-		await expect(feedWatcher({}, runInput(RSS_FEED))).rejects.toThrow('env.storage is unavailable');
+	it('throws when env.DB is unavailable', () => {
+		expect(() => urlHistory({}, runInput(''))).toThrow('env.DB is unavailable');
 	});
 });

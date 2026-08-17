@@ -11,7 +11,8 @@ export type ExampleMeta = {
 	// doesn't silently change an already-verified example's runtime behavior.
 	readonly compatDate: string;
 	// Capability grant this example runs with. Absent → the default no-network
-	// grant. A page-links grant unlocks env.fetch against the fetched page's links.
+	// grant. A page-links grant unlocks target-bound resource capabilities for
+	// URLs discovered in the fetched page.
 	readonly permissions?: Permissions;
 	// Non-JS modules the loader must inject alongside the bundled code (e.g. a
 	// wasm binary the entry imports via a relative specifier). `file` is a
@@ -21,7 +22,10 @@ export type ExampleMeta = {
 	// committed binary under src/examples/, or a package-shipped one under
 	// node_modules/ (version pinned by the lockfile, e.g. @cf-wasm/photon's wasm
 	// binary).
-	readonly modules?: ReadonlyArray<{ readonly name: string; readonly kind: 'wasm'; readonly file: string }>;
+	readonly modules?: ReadonlyArray<
+		| { readonly name: string; readonly label?: string; readonly kind: 'js'; readonly file: string }
+		| { readonly name: string; readonly label?: string; readonly kind: 'wasm'; readonly file: string }
+	>;
 };
 
 // Modules injected into the loader for edited (custom) example code, since
@@ -45,6 +49,14 @@ export const EXAMPLE_REGISTRY: ReadonlyArray<ExampleMeta> = [
 		suggestedUrls: ['https://www.theverge.com/column/960600/xbox-is-a-disaster', 'https://en.wikipedia.org/wiki/Cloudflare'],
 		entry: 'src/examples/markdown.ts',
 		compatDate: '2026-06-22',
+		modules: [
+			{
+				name: 'markdown-dom-polyfill',
+				label: 'markdown-dom-polyfill.ts',
+				kind: 'js',
+				file: 'src/examples/markdown-dom-polyfill.ts',
+			},
+		],
 	},
 	{
 		id: 'opengraph',
@@ -64,17 +76,25 @@ export const EXAMPLE_REGISTRY: ReadonlyArray<ExampleMeta> = [
 	},
 	{
 		id: 'rss-digest',
-		title: 'RSS Feed Digest (env.fetch)',
+		title: 'RSS Feed Digest',
 		description:
 			"Parses an RSS or Atom feed's items and follows each article's own link (embedded in the feed payload) to summarize it as readable markdown.",
 		suggestedUrls: ['https://blog.cloudflare.com/rss/', 'https://hnrss.org/frontpage'],
 		entry: 'src/examples/rss-digest.ts',
 		compatDate: '2026-06-22',
 		permissions: { fetch: 'page-links', maxFetches: 6, cpuMs: 5000 },
+		modules: [
+			{
+				name: 'markdown-dom-polyfill',
+				label: 'markdown-dom-polyfill.ts',
+				kind: 'js',
+				file: 'src/examples/markdown-dom-polyfill.ts',
+			},
+		],
 	},
 	{
 		id: 'cpu-spin',
-		title: 'CPU Spin (killed by platform)',
+		title: 'CPU Spin',
 		description: 'Intentional CPU-intensive workload that demonstrates platform CPU limit enforcement.',
 		suggestedUrls: ['https://example.com'],
 		entry: 'src/examples/cpu-spin.ts',
@@ -82,7 +102,7 @@ export const EXAMPLE_REGISTRY: ReadonlyArray<ExampleMeta> = [
 	},
 	{
 		id: 'blocked-fetch',
-		title: 'Blocked fetch()',
+		title: 'Blocked Fetch',
 		description: 'Demonstrates network call blocking in the Dynamic Worker isolate.',
 		suggestedUrls: ['https://example.com'],
 		entry: 'src/examples/blocked-fetch.ts',
@@ -90,7 +110,7 @@ export const EXAMPLE_REGISTRY: ReadonlyArray<ExampleMeta> = [
 	},
 	{
 		id: 'wasm-add',
-		title: 'WebAssembly (out of the box)',
+		title: 'WebAssembly',
 		description: 'The sandbox loads WebAssembly modules natively — no runtime compilation needed.',
 		suggestedUrls: ['https://example.com'],
 		entry: 'src/examples/wasm-add.ts',
@@ -99,7 +119,7 @@ export const EXAMPLE_REGISTRY: ReadonlyArray<ExampleMeta> = [
 	},
 	{
 		id: 'image-hash',
-		title: 'Image Perceptual Hash (wasm)',
+		title: 'Image Perceptual Hash',
 		description: 'Decodes images referenced by the page with the photon wasm library and computes a 64-bit perceptual difference-hash for each.',
 		suggestedUrls: ['https://en.wikipedia.org/wiki/Cloudflare', 'https://commons.wikimedia.org/wiki/Main_Page'],
 		entry: 'src/examples/image-hash.ts',
@@ -109,7 +129,7 @@ export const EXAMPLE_REGISTRY: ReadonlyArray<ExampleMeta> = [
 	},
 	{
 		id: 'github-repo',
-		title: 'GitHub Repo Stats (env.fetch)',
+		title: 'GitHub Repo Stats',
 		description:
 			'Parses a GitHub API repo response and follows the contributors_url and languages_url links embedded in the payload itself to build a stats summary.',
 		suggestedUrls: ['https://api.github.com/repos/cloudflare/workerd', 'https://api.github.com/repos/anthropics/claude-code'],
@@ -119,9 +139,9 @@ export const EXAMPLE_REGISTRY: ReadonlyArray<ExampleMeta> = [
 	},
 	{
 		id: 'arxiv-pdf',
-		title: 'arXiv PDF → Markdown (wasm)',
+		title: 'arXiv PDF → Markdown',
 		description:
-			"Follows an arXiv abstract page's PDF link, fetches the paper's PDF bytes with env.fetchFile, and parses it to markdown with the liteparse wasm library.",
+			"Follows an arXiv abstract page's PDF capability, reads the paper's bytes, and parses it to markdown with the liteparse wasm library.",
 		suggestedUrls: ['https://arxiv.org/abs/1706.03762', 'https://arxiv.org/abs/2005.14165'],
 		entry: 'src/examples/arxiv-pdf.ts',
 		compatDate: '2026-06-22',
@@ -131,18 +151,18 @@ export const EXAMPLE_REGISTRY: ReadonlyArray<ExampleMeta> = [
 		],
 	},
 	{
-		id: 'feed-watcher',
-		title: 'Feed Watcher (env.storage)',
+		id: 'url-history',
+		title: 'Submitted URL History',
 		description:
-			"Parses an RSS or Atom feed's items and remembers which ones it has already seen, so each run reports only what's new since the last one. Stored data is remembered for about an hour, then automatically forgotten.",
-		suggestedUrls: ['https://blog.cloudflare.com/rss/', 'https://hnrss.org/frontpage'],
-		entry: 'src/examples/feed-watcher.ts',
+			'Appends each submitted URL to a SQLite table and returns the complete history. The demo database is capped at 128 KiB and forgotten after about an hour.',
+		suggestedUrls: ['https://example.com', 'https://www.wikipedia.org', 'https://news.ycombinator.com'],
+		entry: 'src/examples/url-history.ts',
 		compatDate: '2026-06-22',
 		permissions: { fetch: 'none', storage: 'scoped' },
 	},
 	{
 		id: 'arxiv-digest',
-		title: 'arXiv Citations Digest (fetchDepth 2)',
+		title: 'arXiv Citations Digest',
 		description:
 			'Finds arXiv paper links on any citing page — a listing, a Wikipedia article, a blog post — then follows each to its abstract page and its PDF to build a digest with liteparse.',
 		suggestedUrls: ['https://arxiv.org/list/cs.LG/recent', 'https://en.wikipedia.org/wiki/Attention_Is_All_You_Need'],
@@ -152,5 +172,15 @@ export const EXAMPLE_REGISTRY: ReadonlyArray<ExampleMeta> = [
 		modules: [
 			{ name: 'liteparse.wasm', kind: 'wasm', file: 'node_modules/@llamaindex/liteparse-wasm/pkg/liteparse_wasm_bg.wasm' },
 		],
+	},
+	{
+		id: 'write-your-own',
+		title: 'Write Your Own',
+		description:
+			'A starting point with linked-resource capabilities, SQLite storage, logs, and traces. Use the LLM prompt tab to generate a transform, then paste it into transform.ts.',
+		suggestedUrls: ['https://jeremymorrell.dev/', 'https://blog.cloudflare.com/', 'https://en.wikipedia.org/wiki/Cloudflare'],
+		entry: 'src/examples/write-your-own.ts',
+		compatDate: '2026-06-22',
+		permissions: { fetch: 'page-links', fetchDepth: 2, maxFetches: 6, cpuMs: 5000, storage: 'scoped' },
 	},
 ];

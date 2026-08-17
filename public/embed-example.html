@@ -1,146 +1,16 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="en">
-<head>
-	<meta charset="UTF-8" />
-	<meta name="viewport" content="width=device-width, initial-scale=1.0" />
-	<title>Dynamic Workers Demo - Embedded Widget Example</title>
-	<style>
-		* {
-			box-sizing: border-box;
-		}
-
-		body {
-			font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-			margin: 0;
-			padding: 20px;
-			background: #fafafa;
-		}
-
-		h1 {
-			margin-top: 0;
-			color: #333;
-		}
-
-		.container {
-			max-width: 1200px;
-			margin: 0 auto;
-			display: grid;
-			grid-template-columns: 1fr 1fr;
-			gap: 20px;
-		}
-
-		.section {
-			background: white;
-			padding: 20px;
-			border-radius: 8px;
-			box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
-		}
-
-		.section h2 {
-			margin-top: 0;
-			color: #0066cc;
-			font-size: 18px;
-		}
-
-		iframe {
-			width: 100%;
-			height: 600px;
-			border: 1px solid #ddd;
-			border-radius: 4px;
-		}
-
-		.note {
-			background: #f0f8ff;
-			border-left: 4px solid #0066cc;
-			padding: 12px;
-			margin: 16px 0;
-			font-size: 14px;
-			color: #333;
-		}
-
-		.verify-steps {
-			background: #f9f9f9;
-			border: 1px solid #ddd;
-			border-radius: 4px;
-			padding: 12px;
-			margin: 16px 0;
-		}
-
-		.verify-steps h3 {
-			margin-top: 0;
-			color: #333;
-			font-size: 14px;
-		}
-
-		.verify-steps ol {
-			margin: 8px 0;
-			padding-left: 20px;
-		}
-
-		.verify-steps li {
-			margin: 4px 0;
-			font-size: 13px;
-			color: #555;
-		}
-
-		@media (max-width: 768px) {
-			.container {
-				grid-template-columns: 1fr;
-			}
-		}
-	</style>
-</head>
-<body>
-	<h1>Dynamic Workers Demo - Embedded Widget Example</h1>
-
-	<div class="container">
-		<div class="section">
-			<h2>Embedded Widget</h2>
-			<div class="note">
-				The widget below is embedded via an iframe tag. It demonstrates that the widget can be safely embedded in
-				other pages.
-			</div>
-			<iframe src="/"></iframe>
-		</div>
-
-		<div class="section">
-			<h2>Verification Checklist</h2>
-			<div class="verify-steps">
-				<h3>Verify iframe Embedding</h3>
-				<ol>
-					<li>The widget should render above in an iframe (no framing errors)</li>
-					<li>The example dropdown should be populated</li>
-					<li>Click an example and confirm the code appears</li>
-					<li>Open the URL field's datalist and confirm it offers the example's suggested URLs</li>
-					<li>Click "Run" and confirm the Output tab appears with results</li>
-				</ol>
-			</div>
-
-			<div class="verify-steps">
-				<h3>Verify HTML/Script Escaping (AC6.1)</h3>
-				<ol>
-					<li>In the iframe, edit the code (any edit runs as custom code)</li>
-					<li>Replace it with this code:
-						<pre style="font-size: 11px; background: #f0f0f0; padding: 6px; overflow-x: auto;">export default () => ({
-  html: '&lt;script&gt;alert("XSS")&lt;/script&gt;'
-})</pre>
-					</li>
-					<li>Click "Run" and open the Output tab's JSON view</li>
-					<li>Confirm the result shows the text literally, not executing the script</li>
-					<li>No alerts should appear</li>
-					<li>The &lt;script&gt; should appear as inert literal text (rendered via textContent), not executed</li>
-				</ol>
-			</div>
-
-			<div class="note">
-				If the iframe fails to load or shows errors, check:
-				<ul style="margin: 8px 0; padding-left: 20px;">
-					<li>The worker is running locally (<code>npm run dev</code>)</li>
-					<li>Static assets are being served from <code>public/</code></li>
-					<li>No <code>X-Frame-Options: DENY</code> headers are blocking iframe embedding</li>
-				</ul>
-			</div>
-		</div>
-	</div>
-</body>
+	<head>
+		<meta charset="UTF-8" />
+		<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+		<title>Embedded Dynamic Workers Demo</title>
+	</head>
+	<body>
+		<dynamic-workers-demo
+			example="arxiv-pdf"
+			features="logs traces"
+			height="38rem"
+		></dynamic-workers-demo>
+		<script type="module" src="/app.js"></script>
+	</body>
 </html>

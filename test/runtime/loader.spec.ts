@@ -644,10 +644,11 @@ export default async (env, input) => {
 			expect(wc.limits?.cpuMs).toBe(1);
 		});
 
-		it('attaches the CapabilityGate to env only for a page-links grant', async () => {
+		it('attaches the gate and initial resource grants only for a page-links grant', async () => {
 			const withFetch = await captureWorkerCode({ fetch: 'page-links' });
 			const withoutFetch = await captureWorkerCode({ fetch: 'none' });
 			expect('GATE' in (withFetch.env as Record<string, unknown>)).toBe(true);
+			expect((withFetch.env as Record<string, unknown>).RESOURCE_GRANTS).toEqual([]);
 			expect(Object.keys(withoutFetch.env as Record<string, unknown>)).toEqual([]);
 		});
 	});

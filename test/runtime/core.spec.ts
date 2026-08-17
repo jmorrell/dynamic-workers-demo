@@ -9,12 +9,9 @@ import {
 	isValidPermissions,
 	normalizeStoreId,
 	deriveStoreKey,
-	checkStorageWrite,
+	checkDatabaseSize,
 	selectEvictions,
 	STORE_MAX_BYTES,
-	STORE_MAX_KEY_BYTES,
-	STORE_MAX_VALUE_BYTES,
-	STORE_MAX_KEYS,
 } from '@/runtime/core';
 
 describe('hashCode', () => {
@@ -335,7 +332,7 @@ describe('normalizeStoreId', () => {
 
 describe('deriveStoreKey', () => {
 	it('uses the example id for an example run', () => {
-		expect(deriveStoreKey({ type: 'example', exampleId: 'feed-watcher' })).toBe('feed-watcher');
+		expect(deriveStoreKey({ type: 'example', exampleId: 'url-history' })).toBe('url-history');
 	});
 
 	it('prefixes the code hash for a custom run', () => {
@@ -347,46 +344,36 @@ describe('deriveStoreKey', () => {
 	});
 });
 
-describe('checkStorageWrite', () => {
-	const ok = { keyByteLength: 10, valueByteLength: 100, currentKeyCount: 5, keyAlreadyExists: false, databaseSize: 1000 };
-
-	it('accepts a within-limits write', () => {
-		expect(checkStorageWrite(ok)).toEqual({ ok: true });
+describe('checkDatabaseSize', () => {
+	it('accepts a query that remains within the limit', () => {
+		expect(checkDatabaseSize({ databaseSizeBefore: 1000, databaseSizeAfter: 2000 })).toEqual({ ok: true });
 	});
 
-	it('rejects when the database is at/over the hard byte cap (checked first)', () => {
-		const r = checkStorageWrite({ ...ok, databaseSize: STORE_MAX_BYTES });
-		expect(r.ok).toBe(false);
-		if (!r.ok) expect(r.message).toContain('database');
+	it('rejects growth beyond the database limit', () => {
+		const result = checkDatabaseSize({
+			databaseSizeBefore: STORE_MAX_BYTES - 1,
+			databaseSizeAfter: STORE_MAX_BYTES + 4096,
+		});
+		expect(result.ok).toBe(false);
+		if (!result.ok) expect(result.message).toContain('database full');
 	});
 
-	it('rejects an over-long key', () => {
-		const r = checkStorageWrite({ ...ok, keyByteLength: STORE_MAX_KEY_BYTES + 1 });
-		expect(r.ok).toBe(false);
-		if (!r.ok) expect(r.message).toContain('key');
+	it('allows queries that do not grow an already-oversized database', () => {
+		expect(
+			checkDatabaseSize({
+				databaseSizeBefore: STORE_MAX_BYTES + 4096,
+				databaseSizeAfter: STORE_MAX_BYTES + 4096,
+			}),
+		).toEqual({ ok: true });
 	});
 
-	it('rejects an over-large value', () => {
-		const r = checkStorageWrite({ ...ok, valueByteLength: STORE_MAX_VALUE_BYTES + 1 });
-		expect(r.ok).toBe(false);
-		if (!r.ok) expect(r.message).toContain('value');
-	});
-
-	it('rejects a new key that would exceed the key-count cap', () => {
-		const r = checkStorageWrite({ ...ok, currentKeyCount: STORE_MAX_KEYS, keyAlreadyExists: false });
-		expect(r.ok).toBe(false);
-		if (!r.ok) expect(r.message).toContain('key count');
-	});
-
-	it('allows overwriting an existing key even at the key-count cap', () => {
-		expect(checkStorageWrite({ ...ok, currentKeyCount: STORE_MAX_KEYS, keyAlreadyExists: true })).toEqual({ ok: true });
-	});
-
-	it('checks the hard byte cap before the advisory caps', () => {
-		// Over on both the byte cap and the key length: the byte-cap message wins.
-		const r = checkStorageWrite({ ...ok, databaseSize: STORE_MAX_BYTES, keyByteLength: STORE_MAX_KEY_BYTES + 1 });
-		expect(r.ok).toBe(false);
-		if (!r.ok) expect(r.message).toContain('database');
+	it('allows cleanup that shrinks an already-oversized database', () => {
+		expect(
+			checkDatabaseSize({
+				databaseSizeBefore: STORE_MAX_BYTES + 8192,
+				databaseSizeAfter: STORE_MAX_BYTES + 4096,
+			}),
+		).toEqual({ ok: true });
 	});
 });
 
