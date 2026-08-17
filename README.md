@@ -1,6 +1,6 @@
 # Dynamic Workers Demo
 
-A runnable companion to [Extensible Software in the Age of LLMs](https://jeremymorrell.dev/blog/extensible-software-in-the-age-of-llms/). It fetches a URL, runs an editable TypeScript transform inside a sandboxed Cloudflare Dynamic Worker, and displays its output, captured logs, and I/O trace.
+A runnable companion to [Extensible Software in the Age of LLMs](https://jeremymorrell.dev/blog/extensible-software-in-the-age-of-llms/) and the guide [Working with Dynamic Workers](/guides/working-with-dynamic-workers). It fetches a URL, runs an editable TypeScript transform inside a sandboxed Cloudflare Dynamic Worker, and displays its output, captured logs, and I/O trace.
 
 The playground includes all 13 examples from the article, including arXiv PDF parsing, multi-page citation digests, image perceptual hashing with WebAssembly, RSS crawling through resource capabilities, and a small private SQLite database.
 
